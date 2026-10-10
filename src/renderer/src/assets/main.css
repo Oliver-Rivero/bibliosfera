@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-brown: #663A24;
+  --color-teal: #285666;
+  --color-green: #3C6655;
+  --color-cream: #EEE0D9;
+  --color-sky: #C3DDE6;
+
+  --color-bg: #EEE0D9;
+  --color-surface: #F8F1ED;
+  --color-ink: #2A1C14;
+  --color-muted: #6d5a50;
+  --color-line: #d9c8bf;
+  --color-accent: #285666;
+  --color-on-accent: #EEE0D9;
+  --color-chip: #C3DDE6;
+  --color-star: #663A24;
+}
+
+:root {
+  --color-bg: #EEE0D9;
+  --color-surface: #F8F1ED;
+  --color-ink: #2A1C14;
+  --color-muted: #6d5a50;
+  --color-line: #d9c8bf;
+  --color-accent: #285666;
+  --color-on-accent: #EEE0D9;
+  --color-chip: #C3DDE6;
+  --color-star: #663A24;
+}
+
+html.dark {
+  --color-bg: #14232a;
+  --color-surface: #1c323b;
+  --color-ink: #EEE0D9;
+  --color-muted: #a9b9bf;
+  --color-line: #2d4752;
+  --color-accent: #C3DDE6;
+  --color-on-accent: #14232a;
+  --color-chip: #285666;
+  --color-star: #e3b99f;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-bg);
+    color: var(--color-ink);
+    font-family: "DM Sans", Helvetica Neue, Arial, sans-serif;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: "Bricolage Grotesque", Helvetica Neue, Arial, sans-serif;
+    letter-spacing: -0.02em;
+  }
+}
