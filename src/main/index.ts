@@ -17,6 +17,95 @@ function getBooksFile() {
   return newPath
 }
 
+function getLibraryFilesDir() {
+  const dir = join(app.getPath('userData'), 'library_files')
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true })
+  }
+  return dir
+}
+
+function detectPagesFromFile(filePath: string, format?: string): string {
+  try {
+    const cp = require('child_process')
+    const ext = (format || filePath.split('.').pop() || '').toLowerCase()
+
+    if (ext === 'pdf') {
+      // 1. Try native macOS Spotlight metadata (mdls)
+      if (process.platform === 'darwin') {
+        try {
+          const out = cp.execFileSync('/usr/bin/mdls', ['-name', 'kMDItemNumberOfPages', '-raw', filePath], { encoding: 'utf-8', timeout: 3000 }).trim()
+          if (out && out !== '(null)' && !isNaN(parseInt(out)) && parseInt(out) > 0) {
+            return String(parseInt(out))
+          }
+        } catch (e) {}
+      }
+
+      // 2. Scan PDF buffer for /Count N in page tree
+      try {
+        const buf = fs.readFileSync(filePath)
+        const text = buf.toString('binary')
+        const countMatches = text.match(/\/Count\s+(\d+)/g)
+        if (countMatches && countMatches.length > 0) {
+          const counts = countMatches.map(m => {
+            const num = m.match(/\d+/)
+            return num ? parseInt(num[0]) : 0
+          }).filter(n => n > 0)
+          if (counts.length > 0) {
+            return String(Math.max(...counts))
+          }
+        }
+
+        // 3. Count /Type /Page
+        const pageMatches = text.match(/\/Type\s*\/Page(?=[\s\/><\[])/g)
+        if (pageMatches && pageMatches.length > 0) {
+          return String(pageMatches.length)
+        }
+      } catch (pe) {}
+    } else if (ext === 'epub') {
+      // 1. Check OPF metadata
+      try {
+        const containerXml = cp.execFileSync('/usr/bin/unzip', ['-p', filePath, 'META-INF/container.xml'], { encoding: 'utf-8', maxBuffer: 1024 * 1024 })
+        const match = containerXml.match(/full-path=["\x27]([^"\x27]+)["\x27]/i)
+        if (match) {
+          const opfXml = cp.execFileSync('/usr/bin/unzip', ['-p', filePath, match[1]], { encoding: 'utf-8', maxBuffer: 5 * 1024 * 1024 })
+          const pageMetaMatch = opfXml.match(/<(?:meta|dc:format)[^>]*?(?:page|numberOfPages|page_count)[^>]*?>\s*(\d+)\s*</i)
+            || opfXml.match(/<meta[^>]+content=["\x27](\d+)["\x27][^>]+name=["\x27](?:calibre:page_count|numberOfPages|pages)["\x27]/i)
+            || opfXml.match(/<meta[^>]+name=["\x27](?:calibre:page_count|numberOfPages|pages)["\x27][^>]+content=["\x27](\d+)["\x27]/i)
+          if (pageMetaMatch && parseInt(pageMetaMatch[1]) > 5) {
+            return String(parseInt(pageMetaMatch[1]))
+          }
+        }
+      } catch (e) {}
+
+      // 2. Estimate from uncompressed text volume (publishing standard: ~1,600 chars / ~270 words per printed book page)
+      try {
+        const listOutput = cp.execFileSync('/usr/bin/unzip', ['-l', filePath], { encoding: 'utf-8', maxBuffer: 2 * 1024 * 1024 })
+        const lines = listOutput.split('\n')
+        let totalTextBytes = 0
+        for (const line of lines) {
+          const m = line.trim().match(/^(\d+)\s+[\d-]+\s+[\d:]+\s+(.+)$/)
+          if (m) {
+            const size = parseInt(m[1])
+            const filename = m[2].toLowerCase()
+            if ((filename.endsWith('.xhtml') || filename.endsWith('.html') || filename.endsWith('.htm')) &&
+                !filename.includes('toc') && !filename.includes('nav') && !filename.includes('cover')) {
+              totalTextBytes += size
+            }
+          }
+        }
+        if (totalTextBytes > 1000) {
+          const estimated = Math.max(1, Math.round((totalTextBytes * 0.68) / 1600))
+          return String(estimated)
+        }
+      } catch (ee) {}
+    }
+  } catch (err) {
+    console.error('Error detecting pages from file:', err)
+  }
+  return ''
+}
+
 function getStoredBooks() {
   try {
     const file = getBooksFile()
@@ -24,7 +113,24 @@ function getStoredBooks() {
       fs.writeFileSync(file, JSON.stringify([]))
       return []
     }
-    return JSON.parse(fs.readFileSync(file, 'utf-8'))
+    const books = JSON.parse(fs.readFileSync(file, 'utf-8'))
+    let modified = false
+    const library = getStoredLibrary()
+    for (const b of books) {
+      if (!b.pages && b.libraryBookId) {
+        const libBook = library.find((lb: any) => lb.id === b.libraryBookId)
+        if (libBook?.pages) {
+          b.pages = libBook.pages
+          modified = true
+        }
+      }
+    }
+    if (modified) {
+      try {
+        fs.writeFileSync(file, JSON.stringify(books, null, 2))
+      } catch (we) {}
+    }
+    return books
   } catch (e) {
     return []
   }
@@ -58,7 +164,26 @@ function getStoredLibrary(): any[] {
       fs.writeFileSync(file, JSON.stringify([]))
       return []
     }
-    return JSON.parse(fs.readFileSync(file, 'utf-8'))
+    const library = JSON.parse(fs.readFileSync(file, 'utf-8'))
+    let modified = false
+    for (const b of library) {
+      if (!b.pages && b.fileName) {
+        const filePath = join(getLibraryFilesDir(), b.fileName)
+        if (fs.existsSync(filePath)) {
+          const detected = detectPagesFromFile(filePath, b.format)
+          if (detected) {
+            b.pages = detected
+            modified = true
+          }
+        }
+      }
+    }
+    if (modified) {
+      try {
+        fs.writeFileSync(file, JSON.stringify(library, null, 2))
+      } catch (we) {}
+    }
+    return library
   } catch (e) {
     return []
   }
@@ -70,14 +195,6 @@ function setStoredLibrary(books: any[]) {
   } catch (e) {
     console.error("Error saving library:", e)
   }
-}
-
-function getLibraryFilesDir() {
-  const dir = join(app.getPath('userData'), 'library_files')
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true })
-  }
-  return dir
 }
 
 function getCoversDir() {
@@ -172,6 +289,19 @@ app.whenReady().then(() => {
     if (book.coverUrl && (book.coverUrl.startsWith('http://') || book.coverUrl.startsWith('https://'))) {
       book.coverUrl = await downloadAndSaveCover(book.id, book.coverUrl)
     }
+    if (!book.pages) {
+      if (book.libraryBookId) {
+        const library = getStoredLibrary()
+        const libBook = library.find((lb: any) => lb.id === book.libraryBookId)
+        if (libBook?.pages) book.pages = libBook.pages
+      }
+      if (!book.pages && book.title) {
+        try {
+          const online = await searchBookOnline(book.author ? `${book.title} ${book.author}` : book.title)
+          if (online?.pages) book.pages = online.pages
+        } catch (e) {}
+      }
+    }
     books.push(book)
     setStoredBooks(books)
     return books
@@ -238,6 +368,33 @@ app.whenReady().then(() => {
               result.pages = String(doc.number_of_pages_median)
             } else if (doc.number_of_pages) {
               result.pages = String(doc.number_of_pages)
+            }
+
+            // Also check OpenLibrary editions for page count if not yet found
+            if (!result.pages && doc.key) {
+              try {
+                const edRes = await net.fetch(`https://openlibrary.org${doc.key}/editions.json?limit=10`)
+                if (edRes.ok) {
+                  const edData = await edRes.json()
+                  const withPages = edData.entries?.find((e: any) => e.number_of_pages && e.number_of_pages > 10)
+                  if (withPages) {
+                    result.pages = String(withPages.number_of_pages)
+                  }
+                }
+              } catch (ee) {}
+            }
+
+            // Also check OpenLibrary ISBN for page count
+            if (!result.pages && doc.isbn && doc.isbn.length > 0) {
+              try {
+                const isbnRes = await net.fetch(`https://openlibrary.org/isbn/${doc.isbn[0]}.json`)
+                if (isbnRes.ok) {
+                  const isbnData = await isbnRes.json()
+                  if (isbnData.number_of_pages) {
+                    result.pages = String(isbnData.number_of_pages)
+                  }
+                }
+              } catch (ie) {}
             }
 
             if (doc.key) {
@@ -345,7 +502,7 @@ app.whenReady().then(() => {
     return { clean, possibleTitle, possibleAuthor }
   }
 
-  function extractEpubMetadata(epubPath: string): { title?: string; author?: string; coverBuffer?: Buffer; coverMime?: string } | null {
+  function extractEpubMetadata(epubPath: string): { title?: string; author?: string; pages?: string; coverBuffer?: Buffer; coverMime?: string } | null {
     try {
       const cp = require('child_process')
       const containerXml = cp.execFileSync('/usr/bin/unzip', ['-p', epubPath, 'META-INF/container.xml'], { encoding: 'utf-8', maxBuffer: 1024 * 1024 })
@@ -361,6 +518,14 @@ app.whenReady().then(() => {
 
       const authorMatch = opfXml.match(/<dc:creator[^>]*>([^<]+)<\/dc:creator>/i)
       const author = authorMatch ? authorMatch[1].trim() : undefined
+
+      let pages: string | undefined
+      const pageMetaMatch = opfXml.match(/<(?:meta|dc:format)[^>]*?(?:page|numberOfPages|page_count)[^>]*?>\s*(\d+)\s*</i)
+        || opfXml.match(/<meta[^>]+content=["\x27](\d+)["\x27][^>]+name=["\x27](?:calibre:page_count|numberOfPages|pages)["\x27]/i)
+        || opfXml.match(/<meta[^>]+name=["\x27](?:calibre:page_count|numberOfPages|pages)["\x27][^>]+content=["\x27](\d+)["\x27]/i)
+      if (pageMetaMatch && parseInt(pageMetaMatch[1]) > 5) {
+        pages = String(parseInt(pageMetaMatch[1]))
+      }
 
       let coverHref: string | null = null
       const metaCoverMatch = opfXml.match(/<meta[^>]+name=["\x27]cover["\x27][^>]+content=["\x27]([^"\x27]+)["\x27]/i) 
@@ -388,7 +553,7 @@ app.whenReady().then(() => {
         } catch (ce) {}
       }
 
-      return { title, author, coverBuffer: coverBuffer || undefined, coverMime }
+      return { title, author, pages, coverBuffer: coverBuffer || undefined, coverMime }
     } catch (err) {
       return null
     }
@@ -471,13 +636,15 @@ app.whenReady().then(() => {
     // 1. Try EPUB internal metadata
     const epubMeta = ext === 'epub' ? extractEpubMetadata(targetPath) : null
 
-    // 2. Parse filename
+    // 2. Local page detection from file (works for both PDF and EPUB)
+    let pages = detectPagesFromFile(targetPath, ext) || epubMeta?.pages || ''
+
+    // 3. Parse filename
     const { clean, possibleTitle, possibleAuthor } = parseFilenameMetadata(rawFileName)
 
     let title = epubMeta?.title || possibleTitle || clean
     let author = epubMeta?.author || possibleAuthor || 'Autor desconocido'
     let coverUrl = ''
-    let pages = ''
     let year = ''
     let genre = ''
     let synopsis = ''
@@ -570,7 +737,15 @@ app.whenReady().then(() => {
       if (online.coverUrl) {
         book.coverUrl = await downloadAndSaveCover(`lib_${book.id}`, online.coverUrl)
       }
-      if (online.pages) book.pages = online.pages
+      if (online.pages) {
+        book.pages = online.pages
+      } else if (!book.pages && book.fileName) {
+        const filePath = join(getLibraryFilesDir(), book.fileName)
+        if (fs.existsSync(filePath)) {
+          const detected = detectPagesFromFile(filePath, book.format)
+          if (detected) book.pages = detected
+        }
+      }
       if (online.year) book.year = online.year
       if (online.genre) book.genre = online.genre
       if (online.synopsis) book.synopsis = online.synopsis

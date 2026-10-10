@@ -292,16 +292,6 @@ export default function App() {
             )}
           </button>
 
-          {/* Settings Button */}
-          <button
-            onClick={() => setShowSettingsModal(true)}
-            className="py-[9px] px-3.5 rounded-full border border-[var(--color-line)] bg-[var(--color-surface)] text-[var(--color-ink)] hover:bg-[var(--color-bg)] font-medium text-[12.5px] flex items-center gap-2 transition-colors cursor-pointer shadow-xs"
-            title="Ajustes y opciones de importación / exportación"
-          >
-            <Settings className="w-3.5 h-3.5 stroke-[2.2]" />
-            <span className="hidden sm:inline">Ajustes</span>
-          </button>
-
           {activeTab === 'readings' && (
             <button 
               onClick={() => { setEditingBook(undefined); setShowModal(true); }}
@@ -311,6 +301,16 @@ export default function App() {
               <span className="hidden sm:inline">Añadir lectura</span>
             </button>
           )}
+
+          {/* Settings Button (A la derecha, sólo icono) */}
+          <button
+            onClick={() => setShowSettingsModal(true)}
+            className="w-[38px] h-[38px] rounded-full border border-[var(--color-line)] bg-[var(--color-surface)] text-[var(--color-ink)] hover:bg-[var(--color-bg)] transition-colors cursor-pointer shadow-xs flex items-center justify-center shrink-0"
+            title="Ajustes"
+            aria-label="Ajustes"
+          >
+            <Settings className="w-4 h-4 stroke-[2.2]" />
+          </button>
         </div>
       </header>
 
@@ -518,12 +518,6 @@ export default function App() {
 
       {/* Book List */}
       <section>
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-[20px] font-bold font-['Bricolage_Grotesque']">
-            Leídos ({filteredBooks.length})
-          </h2>
-        </div>
-        
         {filteredBooks.length === 0 ? (
           <div className="border-2 border-dashed border-[var(--color-line)] rounded-[18px] p-[40px_20px] text-center text-[var(--color-muted)] flex flex-col items-center gap-2">
             <p className="font-medium">
