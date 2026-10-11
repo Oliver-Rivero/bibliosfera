@@ -11,6 +11,15 @@ export default defineConfig({
         '@renderer': resolve('src/renderer/src')
       }
     },
+    server: {
+      watch: {
+        usePolling: true,
+        interval: 300
+      },
+      headers: {
+        'Cache-Control': 'no-store'
+      }
+    },
     plugins: [react()]
   }
 })

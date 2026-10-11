@@ -1,16 +1,18 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Search, Loader2 } from 'lucide-react'
+import { X, Search, Loader2, Sparkles, Upload } from 'lucide-react'
 import { Book } from '../types'
 
 interface AddBookModalProps {
   onClose: () => void
-  onAdd: (book: Book) => void
+  onAdd: (book: Book) => void | Promise<void>
   bookToEdit?: Book
 }
 
 export default function AddBookModal({ onClose, onAdd, bookToEdit }: AddBookModalProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearching, setIsSearching] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isEnriching, setIsEnriching] = useState(false)
   const [showForm, setShowForm] = useState(!!bookToEdit)
   const [bookData, setBookData] = useState<Partial<Book>>(bookToEdit || {
     rating: 4,
@@ -29,10 +31,93 @@ export default function AddBookModal({ onClose, onAdd, bookToEdit }: AddBookModa
 
   const dialogRef = useRef<HTMLDialogElement>(null)
   const titleInputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleCoverUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      alert('Por favor, selecciona un archivo de imagen válido (JPG, PNG o WEBP).')
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        const img = new Image()
+        img.onload = () => {
+          const canvas = document.createElement('canvas')
+          const MAX_WIDTH = 480
+          const MAX_HEIGHT = 720
+          let width = img.width
+          let height = img.height
+
+          if (width > height) {
+            if (width > MAX_WIDTH) {
+              height = Math.round((height * MAX_WIDTH) / width)
+              width = MAX_WIDTH
+            }
+          } else {
+            if (height > MAX_HEIGHT) {
+              width = Math.round((width * MAX_HEIGHT) / height)
+              height = MAX_HEIGHT
+            }
+          }
+          canvas.width = width
+          canvas.height = height
+          const ctx = canvas.getContext('2d')
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height)
+            const dataUrl = canvas.toDataURL(file.type === 'image/png' ? 'image/png' : 'image/jpeg', 0.9)
+            setBookData(prev => ({ ...prev, coverUrl: dataUrl }))
+          } else {
+            setBookData(prev => ({ ...prev, coverUrl: reader.result as string }))
+          }
+        }
+        img.src = reader.result
+      }
+    }
+    reader.readAsDataURL(file)
+  }
 
   useEffect(() => {
-    dialogRef.current?.showModal()
+    try {
+      if (!dialogRef.current?.open) {
+        dialogRef.current?.showModal()
+      }
+    } catch {}
   }, [])
+
+  useEffect(() => {
+    if (bookToEdit) {
+      setBookData(bookToEdit)
+      setShowForm(true)
+      // If book lacks synopsis or pages or year, auto-enrich in background!
+      const lacksData = !bookToEdit.synopsis || !bookToEdit.pages || !bookToEdit.year || !bookToEdit.genre || !bookToEdit.coverUrl
+      if (lacksData && bookToEdit.title) {
+        setIsEnriching(true)
+        const q = [bookToEdit.title, bookToEdit.author !== 'Autor desconocido' ? bookToEdit.author : ''].filter(Boolean).join(' ').trim()
+        window.api.searchBook(q).then(data => {
+          if (data) {
+            setBookData(prev => ({
+              ...prev,
+              title: prev.title || data.title,
+              author: (!prev.author || prev.author === 'Autor desconocido') && data.author ? data.author : prev.author,
+              coverUrl: prev.coverUrl || data.coverUrl || '',
+              genre: prev.genre || data.genre || '',
+              year: prev.year || data.year || '',
+              isbn: prev.isbn || data.isbn || '',
+              pages: prev.pages || data.pages || '',
+              synopsis: prev.synopsis || data.synopsis || ''
+            }))
+          }
+        }).catch(() => {}).finally(() => {
+          setIsEnriching(false)
+        })
+      }
+    }
+  }, [bookToEdit])
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -71,32 +156,67 @@ export default function AddBookModal({ onClose, onAdd, bookToEdit }: AddBookModa
     }
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleEnrichOnline = async () => {
+    const query = [bookData.title, bookData.author !== 'Autor desconocido' ? bookData.author : ''].filter(Boolean).join(' ').trim()
+    if (!query) return
+    setIsEnriching(true)
+    try {
+      const data = await window.api.searchBook(query)
+      if (data) {
+        setBookData(prev => ({
+          ...prev,
+          title: prev.title || data.title,
+          author: (!prev.author || prev.author === 'Autor desconocido') && data.author ? data.author : prev.author,
+          coverUrl: prev.coverUrl || data.coverUrl || '',
+          genre: prev.genre || data.genre || '',
+          year: prev.year || data.year || '',
+          isbn: prev.isbn || data.isbn || '',
+          pages: prev.pages || data.pages || '',
+          synopsis: prev.synopsis || data.synopsis || ''
+        }))
+      }
+    } catch (err) {
+      console.error('Error enriqueciendo libro:', err)
+    } finally {
+      setIsEnriching(false)
+    }
+  }
+
+  const handleSubmit = async (e?: React.FormEvent | React.MouseEvent) => {
+    if (e && e.preventDefault) e.preventDefault()
     if (!bookData.title?.trim()) {
       titleInputRef.current?.focus()
       return
     }
 
+    if (isSubmitting) return
+    setIsSubmitting(true)
+
     const newBook: Book = {
       id: bookData.id || Date.now().toString(),
       title: bookData.title.trim(),
       author: bookData.author?.trim() || "Autor desconocido",
-      rating: bookData.rating || 3,
+      rating: typeof bookData.rating === 'number' ? bookData.rating : (Number(bookData.rating) || 3),
       dateRead: bookData.dateRead || new Date().toISOString().substring(0, 10),
       synopsis: bookData.synopsis?.trim() || '',
       comment: bookData.comment?.trim() || '',
       coverUrl: bookData.coverUrl?.trim() || '',
       genre: bookData.genre?.trim() || '',
-      year: bookData.year?.trim() || '',
+      year: bookData.year ? (parseInt(String(bookData.year), 10) || undefined) : undefined,
       isbn: bookData.isbn?.trim() || '',
-      pages: bookData.pages?.trim() || '',
+      pages: bookData.pages ? (parseInt(String(bookData.pages), 10) || undefined) : undefined,
       readingTime: bookData.readingTime?.trim() || '',
       libraryBookId: bookData.libraryBookId
     }
 
-    onAdd(newBook)
-    closeModal()
+    try {
+      await onAdd(newBook)
+    } catch (err) {
+      console.error('Error en onAdd:', err)
+    } finally {
+      setIsSubmitting(false)
+      closeModal()
+    }
   }
 
   const closeModal = () => {
@@ -182,21 +302,39 @@ export default function AddBookModal({ onClose, onAdd, bookToEdit }: AddBookModa
           <div className="p-5 sm:p-6 pb-4 border-b border-[var(--color-line)] flex justify-between items-center bg-[var(--color-surface)] flex-shrink-0">
             <div>
               <h2 className="text-[22px] sm:text-[24px] font-bold font-['Bricolage_Grotesque']">
-                {bookToEdit ? 'Editar lectura' : 'Confirmar datos del libro'}
+                {bookToEdit?.libraryBookId ? 'Pasar a Mis lecturas' : (bookToEdit ? 'Editar lectura' : 'Confirmar datos del libro')}
               </h2>
               <p className="text-[13px] text-[var(--color-muted)]">
-                Revisa y ajusta los campos antes de guardar en Mis lecturas.
+                {bookToEdit?.libraryBookId
+                  ? 'Revisa los datos del eBook antes de incorporarlo a tu diario de lecturas.'
+                  : 'Revisa y ajusta los campos antes de guardar en Mis lecturas.'}
               </p>
             </div>
-            {!bookToEdit && (
-              <button 
-                type="button" 
-                onClick={() => setShowForm(false)} 
-                className="text-[13px] text-[var(--color-accent)] hover:underline font-medium cursor-pointer"
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleEnrichOnline}
+                disabled={isEnriching}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--color-line)] bg-[var(--color-bg)] hover:bg-[var(--color-line)] text-[12px] font-medium text-[var(--color-ink)] transition-colors cursor-pointer disabled:opacity-50"
+                title="Buscar en internet para completar automáticamente portada, sinopsis, páginas, género y año"
               >
-                ← Nueva búsqueda
+                {isEnriching ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-accent)]" />
+                ) : (
+                  <Sparkles className="w-3.5 h-3.5 text-[var(--color-accent)]" />
+                )}
+                <span>{isEnriching ? 'Buscando...' : 'Completar con internet'}</span>
               </button>
-            )}
+              {!bookToEdit && (
+                <button 
+                  type="button" 
+                  onClick={() => setShowForm(false)} 
+                  className="text-[13px] text-[var(--color-accent)] hover:underline font-medium cursor-pointer"
+                >
+                  ← Nueva búsqueda
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Form Content (Scrollable if viewport is tiny, but wide enough to fit cleanly) */}
@@ -206,41 +344,77 @@ export default function AddBookModal({ onClose, onAdd, bookToEdit }: AddBookModa
               {/* Left Column: Cover, Title, Author & Publication Data */}
               <div className="flex flex-col gap-4">
                 
-                {/* Cover Preview & URL input */}
-                <div className="flex gap-3.5 p-3 bg-[var(--color-bg)] rounded-[14px] border border-[var(--color-line)] items-center">
-                  {bookData.coverUrl ? (
-                    <img 
-                      src={bookData.coverUrl} 
-                      alt="Portada" 
-                      className="w-14 h-20 object-cover rounded-[6px] shadow-sm border border-[var(--color-line)] bg-white flex-shrink-0"
-                      onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
-                    />
-                  ) : (
-                    <div className="w-14 h-20 rounded-[6px] bg-[var(--color-line)] flex items-center justify-center text-[11px] text-[var(--color-muted)] text-center p-1 flex-shrink-0">
-                      Sin portada
-                    </div>
-                  )}
-                  <div className="flex-1 flex flex-col gap-1 min-w-0">
-                    <label htmlFor="input-cover" className="text-[12px] font-medium text-[var(--color-muted)]">
-                      Foto de portada (URL)
-                    </label>
-                    <input 
-                      type="url" 
-                      id="input-cover"
-                      value={bookData.coverUrl || ''}
-                      onChange={e => setBookData({...bookData, coverUrl: e.target.value})}
-                      placeholder="URL de imagen autocompletada"
-                      className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-[8px] p-[6px_10px] text-[12px] w-full truncate"
-                    />
-                    {bookData.coverUrl && (
-                      <button 
-                        type="button" 
-                        onClick={() => setBookData({...bookData, coverUrl: ''})}
-                        className="text-[11px] text-red-600 hover:underline self-start cursor-pointer"
-                      >
-                        Quitar foto
-                      </button>
+                {/* Cover Preview & URL / File input */}
+                <div className="flex gap-3.5 p-3.5 bg-[var(--color-bg)] rounded-[14px] border border-[var(--color-line)] items-center">
+                  <div 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-16 h-22 rounded-[6px] overflow-hidden bg-[var(--color-line)] flex items-center justify-center text-[11px] text-[var(--color-muted)] text-center p-1 flex-shrink-0 cursor-pointer relative group border border-black/10 shadow-xs"
+                    title="Haz clic para seleccionar o cambiar portada"
+                  >
+                    {bookData.coverUrl ? (
+                      <>
+                        <img 
+                          src={bookData.coverUrl} 
+                          alt="Portada" 
+                          className="w-full h-full object-cover rounded-[5px]"
+                          onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
+                        />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px] font-bold">
+                          Cambiar
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center gap-1 text-[var(--color-muted)] group-hover:text-[var(--color-ink)] transition-colors">
+                        <Upload className="w-5 h-5" />
+                        <span className="text-[9.5px] leading-tight">Subir foto</span>
+                      </div>
                     )}
+                  </div>
+
+                  <div className="flex-1 flex flex-col gap-1.5 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[12px] font-medium text-[var(--color-muted)]">
+                        Portada del libro
+                      </label>
+                      {bookData.coverUrl && (
+                        <button 
+                          type="button" 
+                          onClick={() => setBookData({...bookData, coverUrl: ''})}
+                          className="text-[11px] text-red-600 hover:underline cursor-pointer"
+                        >
+                          Quitar foto
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Hidden file input */}
+                    <input 
+                      ref={fileInputRef}
+                      type="file" 
+                      accept="image/png, image/jpeg, image/jpg, image/webp"
+                      onChange={handleCoverUpload}
+                      className="hidden"
+                    />
+
+                    <div className="flex gap-2 items-center">
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="px-3 py-1.5 rounded-[8px] bg-[var(--color-surface)] border border-[var(--color-line)] hover:border-[var(--color-accent)] text-[12px] font-medium text-[var(--color-ink)] flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs"
+                      >
+                        <Upload className="w-3.5 h-3.5 text-[var(--color-accent)]" />
+                        <span>Subir imagen (JPG, PNG)</span>
+                      </button>
+                    </div>
+
+                    <input 
+                      type="text" 
+                      id="input-cover"
+                      value={bookData.coverUrl?.startsWith('data:') ? 'Imagen local cargada' : (bookData.coverUrl || '')}
+                      onChange={e => setBookData({...bookData, coverUrl: e.target.value})}
+                      placeholder="O introduce una URL de imagen..."
+                      className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-[8px] p-[5px_8px] text-[11.5px] w-full truncate text-[var(--color-muted)]"
+                    />
                   </div>
                 </div>
 
@@ -461,11 +635,12 @@ export default function AddBookModal({ onClose, onAdd, bookToEdit }: AddBookModa
               Cancelar
             </button>
             <button 
-              type="submit" 
-              form="book-form"
-              className="p-[10px_24px] rounded-[12px] bg-[var(--color-accent)] text-[var(--color-on-accent)] font-bold text-[14px] hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
+              type="button" 
+              onClick={handleSubmit}
+              disabled={isSubmitting}
+              className="p-[10px_24px] rounded-[12px] bg-[var(--color-accent)] text-[var(--color-on-accent)] font-bold text-[14px] hover:opacity-90 transition-opacity cursor-pointer shadow-xs disabled:opacity-50"
             >
-              {bookToEdit ? 'Guardar cambios' : 'Guardar en mi listado'}
+              {isSubmitting ? 'Guardando...' : 'Aceptar'}
             </button>
           </div>
 

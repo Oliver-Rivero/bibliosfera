@@ -33,3 +33,18 @@ export interface LibraryBook {
   status: 'pending' | 'reading' | 'read';
   readingBookId?: string; // ID in readings if read
 }
+
+export interface RecommendedBook {
+  id: string;
+  title: string;
+  author: string;
+  coverUrl?: string;
+  year?: string;
+  pages?: string;
+  genre?: string;
+  synopsis?: string;
+  reason: string;
+  basedOnTitle?: string;
+  basedOnRating?: number;
+}
+

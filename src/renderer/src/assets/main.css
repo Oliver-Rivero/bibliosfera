@@ -20,7 +20,17 @@
   --color-star: #663A24;
 }
 
-:root {
+/* =========================================================
+   TEMA 1: ELEGANTE (Predeterminado)
+   ========================================================= */
+:root,
+html[data-theme="elegante"] {
+  --color-brown: #663A24;
+  --color-teal: #285666;
+  --color-green: #3C6655;
+  --color-cream: #EEE0D9;
+  --color-sky: #C3DDE6;
+
   --color-bg: #EEE0D9;
   --color-surface: #F8F1ED;
   --color-ink: #2A1C14;
@@ -32,7 +42,8 @@
   --color-star: #663A24;
 }
 
-html.dark {
+html.dark,
+html.dark[data-theme="elegante"] {
   --color-bg: #14232a;
   --color-surface: #1c323b;
   --color-ink: #EEE0D9;
@@ -44,11 +55,90 @@ html.dark {
   --color-star: #e3b99f;
 }
 
+/* =========================================================
+   TEMA 2: CACTUSITO (#FFF2F1, #A7EEC2, #FFAFF5, #481C58)
+   ========================================================= */
+html[data-theme="cactusito"] {
+  --color-brown: #6A287E;
+  --color-teal: #481C58;
+  --color-green: #28664B;
+  --color-cream: #FFF2F1;
+  --color-sky: #A7EEC2;
+
+  --color-bg: #FFF2F1;
+  --color-surface: #FFFFFF;
+  --color-ink: #481C58;
+  --color-muted: #78458A;
+  --color-line: #F3C6EC;
+  --color-accent: #481C58;
+  --color-on-accent: #A7EEC2;
+  --color-chip: #FFAFF5;
+  --color-star: #481C58;
+}
+
+html.dark[data-theme="cactusito"] {
+  --color-brown: #6A287E;
+  --color-teal: #481C58;
+  --color-green: #28664B;
+  --color-cream: #FFF2F1;
+  --color-sky: #A7EEC2;
+
+  --color-bg: #1B0A22;
+  --color-surface: #2B1136;
+  --color-ink: #FFF2F1;
+  --color-muted: #DFB5E8;
+  --color-line: #56236B;
+  --color-accent: #A7EEC2;
+  --color-on-accent: #481C58;
+  --color-chip: #481C58;
+  --color-star: #FFAFF5;
+}
+
+/* =========================================================
+   TEMA 3: EX LIBRIS (Verde Biblioteca, Lino, Salvia y Latón)
+   ========================================================= */
+html[data-theme="exlibris"] {
+  --color-brown: #8C5828;
+  --color-teal: #1E3F32;
+  --color-green: #2F5D4A;
+  --color-cream: #F4F1EA;
+  --color-sky: #D5E2DA;
+
+  --color-bg: #F4F1EA;
+  --color-surface: #FBF9F5;
+  --color-ink: #182921;
+  --color-muted: #52665C;
+  --color-line: #D4CFC3;
+  --color-accent: #1E3F32;
+  --color-on-accent: #F4F1EA;
+  --color-chip: #D5E2DA;
+  --color-star: #C88A36;
+}
+
+html.dark[data-theme="exlibris"] {
+  --color-brown: #8C5828;
+  --color-teal: #1E3F32;
+  --color-green: #2F5D4A;
+  --color-cream: #F4F1EA;
+  --color-sky: #D5E2DA;
+
+  --color-bg: #111E19;
+  --color-surface: #192B24;
+  --color-ink: #F4F1EA;
+  --color-muted: #9EB5A8;
+  --color-line: #2B443A;
+  --color-accent: #D5E2DA;
+  --color-on-accent: #111E19;
+  --color-chip: #254236;
+  --color-star: #E0A958;
+}
+
 @layer base {
   body {
     background-color: var(--color-bg);
     color: var(--color-ink);
     font-family: "DM Sans", Helvetica Neue, Arial, sans-serif;
+    transition: background-color 0.2s ease, color 0.2s ease;
   }
   h1, h2, h3, h4, h5, h6 {
     font-family: "Bricolage Grotesque", Helvetica Neue, Arial, sans-serif;

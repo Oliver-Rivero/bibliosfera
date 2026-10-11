@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { LibraryBook } from '../types'
 import { 
   Library, 
@@ -27,127 +27,20 @@ import {
   Tablet,
   CheckSquare,
   Square,
-  Zap
+  Zap,
+  ArrowUpDown
 } from 'lucide-react'
 import SettingsModal from './SettingsModal'
 
-interface SpinePalette {
-  bg: string
-  text: string
-  accent: string
-  ribbon: string
-  isLight: boolean
-}
-
-// Fallback editorial bookcloth palette with guaranteed high contrast
-const SPINE_PALETTES: SpinePalette[] = [
-  { bg: '#663A24', text: '#FDFBF7', accent: '#D7BA9D', ribbon: '#C3DDE6', isLight: false }, // Terracota cálido
-  { bg: '#285666', text: '#FDFBF7', accent: '#8EAFC0', ribbon: '#F4D06F', isLight: false }, // Azul petróleo
-  { bg: '#3C6655', text: '#FDFBF7', accent: '#A3C2B3', ribbon: '#E29578', isLight: false }, // Verde bosque
-  { bg: '#7A3B43', text: '#FDFBF7', accent: '#D89BA4', ribbon: '#FFE6A7', isLight: false }, // Granate / Borgoña
-  { bg: '#3B4E61', text: '#FDFBF7', accent: '#9EBAD2', ribbon: '#FFDDD2', isLight: false }, // Azul pizarra
-  { bg: '#8C6239', text: '#FDFBF7', accent: '#E0C5A8', ribbon: '#83C5BE', isLight: false }, // Ocre tabaco
-  { bg: '#2B333E', text: '#FDFBF7', accent: '#CBD5E0', ribbon: '#FEB2B2', isLight: false }, // Grafito / Marino
-  { bg: '#5C4033', text: '#FDFBF7', accent: '#C8B097', ribbon: '#90E0EF', isLight: false }, // Cuero tostado
-  { bg: '#4A5859', text: '#FDFBF7', accent: '#BACECF', ribbon: '#F4A261', isLight: false }, // Gris mineral
-  { bg: '#6B4C35', text: '#FDFBF7', accent: '#D7BA9D', ribbon: '#A8DADC', isLight: false }  // Habana suave
-]
-
-const coverPaletteCache = new Map<string, SpinePalette>()
-
-// Extract dominant color from book cover (specifically sampling the spine/left edge of the cover)
-function extractCoverPalette(coverUrl: string, fallbackIdx: number): Promise<SpinePalette> {
-  return new Promise((resolve) => {
-    if (!coverUrl) {
-      resolve(SPINE_PALETTES[fallbackIdx % SPINE_PALETTES.length])
-      return
-    }
-
-    if (coverPaletteCache.has(coverUrl)) {
-      resolve(coverPaletteCache.get(coverUrl)!)
-      return
-    }
-
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.src = coverUrl
-
-    img.onload = () => {
-      try {
-        const canvas = document.createElement('canvas')
-        const ctx = canvas.getContext('2d')
-        if (!ctx) {
-          resolve(SPINE_PALETTES[fallbackIdx % SPINE_PALETTES.length])
-          return
-        }
-
-        // Sample the left 30% of the cover image (where the spine folds on a real book)
-        canvas.width = 16
-        canvas.height = 32
-        ctx.drawImage(img, 0, 0, img.naturalWidth * 0.35, img.naturalHeight, 0, 0, 16, 32)
-
-        const imgData = ctx.getImageData(0, 0, 16, 32).data
-        let rTotal = 0, gTotal = 0, bTotal = 0, count = 0
-
-        for (let i = 0; i < imgData.length; i += 4) {
-          const a = imgData[i + 3]
-          if (a > 128) {
-            rTotal += imgData[i]
-            gTotal += imgData[i + 1]
-            bTotal += imgData[i + 2]
-            count++
-          }
-        }
-
-        if (count === 0) {
-          resolve(SPINE_PALETTES[fallbackIdx % SPINE_PALETTES.length])
-          return
-        }
-
-        let r = Math.round(rTotal / count)
-        let g = Math.round(gTotal / count)
-        let b = Math.round(bTotal / count)
-
-        // Perceived luminance using standard ITU-R BT.709
-        const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-
-        // If color is washed out / blinding white, tone down to warm parchment
-        if (luminance > 0.88) {
-          r = Math.round(r * 0.92)
-          g = Math.round(g * 0.90)
-          b = Math.round(b * 0.88)
-        }
-
-        const isLight = (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.55
-
-        // 100% Guaranteed High-Contrast Typography:
-        // Light spine -> Deep charcoal ink text (#14232A)
-        // Dark spine -> Crisp porcelain cream white (#FDFBF7)
-        const text = isLight ? '#14232A' : '#FDFBF7'
-        const accent = isLight ? 'rgba(20, 35, 42, 0.45)' : 'rgba(253, 251, 247, 0.6)'
-        const ribbon = isLight ? '#285666' : '#F4D06F'
-        const bg = `rgb(${r}, ${g}, ${b})`
-
-        const palette: SpinePalette = { bg, text, accent, ribbon, isLight }
-        coverPaletteCache.set(coverUrl, palette)
-        resolve(palette)
-      } catch {
-        resolve(SPINE_PALETTES[fallbackIdx % SPINE_PALETTES.length])
-      }
-    }
-
-    img.onerror = () => {
-      resolve(SPINE_PALETTES[fallbackIdx % SPINE_PALETTES.length])
-    }
-  })
-}
+import { SpinePalette, SPINE_PALETTES, extractCoverPalette } from '../utils/palette'
 
 interface LibraryViewProps {
   onMarkAsRead: (libraryBook: LibraryBook) => void
   readBookIds: string[]
+  onBooksCountChange?: (count: number) => void
 }
 
-export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewProps) {
+export default function LibraryView({ onMarkAsRead, readBookIds, onBooksCountChange }: LibraryViewProps) {
   const [books, setBooks] = useState<LibraryBook[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'read'>('all')
@@ -159,6 +52,52 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
   const [editingBook, setEditingBook] = useState<LibraryBook | null>(null)
   const [inspectingBook, setInspectingBook] = useState<LibraryBook | null>(null)
   const [notification, setNotification] = useState<string | null>(null)
+  const libraryCoverInputRef = useRef<HTMLInputElement>(null)
+
+  const handleLibraryCoverUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !editingBook) return
+    if (!file.type.startsWith('image/')) {
+      alert('Por favor selecciona una imagen válida (JPG o PNG).')
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        const img = new Image()
+        img.onload = () => {
+          const canvas = document.createElement('canvas')
+          const MAX_WIDTH = 480
+          const MAX_HEIGHT = 720
+          let width = img.width
+          let height = img.height
+          if (width > height) {
+            if (width > MAX_WIDTH) {
+              height = Math.round((height * MAX_WIDTH) / width)
+              width = MAX_WIDTH
+            }
+          } else {
+            if (height > MAX_HEIGHT) {
+              width = Math.round((width * MAX_HEIGHT) / height)
+              height = MAX_HEIGHT
+            }
+          }
+          canvas.width = width
+          canvas.height = height
+          const ctx = canvas.getContext('2d')
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height)
+            const dataUrl = canvas.toDataURL(file.type === 'image/png' ? 'image/png' : 'image/jpeg', 0.9)
+            setEditingBook(prev => prev ? ({ ...prev, coverUrl: dataUrl }) : null)
+          } else {
+            setEditingBook(prev => prev ? ({ ...prev, coverUrl: reader.result as string }) : null)
+          }
+        }
+        img.src = reader.result
+      }
+    }
+    reader.readAsDataURL(file)
+  }
 
   // eReader & Multi-select & Export state
   const [connectedDevice, setConnectedDevice] = useState<{
@@ -169,9 +108,21 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
   } | null>(null)
   const [isDragOverDevice, setIsDragOverDevice] = useState(false)
   const [draggedBookId, setDraggedBookId] = useState<string | null>(null)
+  const [dragOverTargetId, setDragOverTargetId] = useState<string | null>(null)
+  const [sortBy, setSortBy] = useState<'custom' | 'title-asc' | 'title-desc' | 'author-asc'>('custom')
   const [isSelectMode, setIsSelectMode] = useState(false)
   const [selectedBookIds, setSelectedBookIds] = useState<string[]>([])
   const [isExportOpen, setIsExportOpen] = useState(false)
+  const [hoveredSpine, setHoveredSpine] = useState<{
+    book: LibraryBook
+    pagesCount: number
+    palette: SpinePalette
+    isRead: boolean
+    formatUpper: string
+    x: number
+    y: number
+    showBelow: boolean
+  } | null>(null)
 
   useEffect(() => {
     loadLibrary()
@@ -190,6 +141,7 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
   const loadLibrary = async () => {
     const list = await window.api.getLibraryBooks()
     setBooks(list)
+    if (onBooksCountChange) onBooksCountChange(list.length)
   }
 
   const showToast = (msg: string) => {
@@ -225,7 +177,12 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
   }
 
   const handleSendToDevice = async (book: LibraryBook) => {
-    showToast(`Buscando dispositivo eReader / USB para copiar "${book.title}"...`)
+    const dev = connectedDevice || (await window.api.getConnectedDevice())
+    if (!dev || !dev.connected) {
+      showToast('No hay ningún eReader conectado. Conecta un eReader para realizar la transferencia.')
+      return
+    }
+    showToast(`Transfiriendo "${book.title}" a ${dev.name}...`)
     const res = await window.api.sendToDevice(book.id)
     showToast(res.message)
   }
@@ -253,13 +210,39 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
 
   const handleTransferSelectionToDevice = async () => {
     if (selectedBookIds.length === 0) return
-    const deviceName = connectedDevice ? connectedDevice.name : 'tu dispositivo'
-    showToast(`Transfiriendo ${selectedBookIds.length} libros a ${deviceName}...`)
-    const res = await window.api.sendMultipleToDevice(selectedBookIds)
+    const dev = connectedDevice || (await window.api.getConnectedDevice())
+    if (!dev || !dev.connected) {
+      showToast('No hay ningún eReader conectado. Conecta un eReader para realizar la transferencia.')
+      return
+    }
+    showToast(`Transfiriendo ${selectedBookIds.length} libros a ${dev.name}...`)
+    const res = await window.api.sendMultipleToDevice(selectedBookIds, dev.targetFolder)
     showToast(res.message)
     if (res.success) {
       setSelectedBookIds([])
       setIsSelectMode(false)
+    }
+  }
+
+  const handleDeleteSelection = async () => {
+    if (selectedBookIds.length === 0) return
+    const count = selectedBookIds.length
+    const confirmMsg = count === 1
+      ? '¿Eliminar definitivamente el título seleccionado de tu biblioteca y borrar su archivo del disco?'
+      : `¿Eliminar definitivamente los ${count} títulos seleccionados de tu biblioteca y borrar sus archivos del disco?`
+    if (confirm(confirmMsg)) {
+      const updated = await window.api.deleteMultipleLibraryBooks(selectedBookIds)
+      setBooks(updated)
+      if (inspectingBook && selectedBookIds.includes(inspectingBook.id)) {
+        setInspectingBook(null)
+      }
+      setSelectedBookIds([])
+      setIsSelectMode(false)
+      showToast(
+        count === 1
+          ? 'Libro eliminado de la biblioteca.'
+          : `Se han eliminado ${count} títulos seleccionados de la biblioteca.`
+      )
     }
   }
 
@@ -300,6 +283,30 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
     }
   }
 
+  const handleBookDropReorder = async (targetBookId: string) => {
+    setDragOverTargetId(null)
+    if (!draggedBookId || draggedBookId === targetBookId) return
+
+    const currentList = [...books]
+    const fromIdx = currentList.findIndex(b => b.id === draggedBookId)
+    const toIdx = currentList.findIndex(b => b.id === targetBookId)
+    if (fromIdx === -1 || toIdx === -1) return
+
+    const [moved] = currentList.splice(fromIdx, 1)
+    currentList.splice(toIdx, 0, moved)
+
+    setBooks(currentList)
+    setSortBy('custom')
+
+    try {
+      const reorderedIds = currentList.map(b => b.id)
+      await window.api.reorderLibraryBooks(reorderedIds)
+      showToast('Orden personalizado guardado.')
+    } catch (e) {
+      console.error('Error reordering books:', e)
+    }
+  }
+
   const handleEnrich = async (book: LibraryBook) => {
     setEnrichingId(book.id)
     showToast(`Buscando portada y datos para "${book.title}"...`)
@@ -323,6 +330,7 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
     if (confirm(`¿Eliminar definitivamente "${book.title}" de tu biblioteca y borrar su archivo del disco?`)) {
       const updated = await window.api.deleteLibraryBook(book.id)
       setBooks(updated)
+      if (onBooksCountChange) onBooksCountChange(updated.length)
       if (inspectingBook?.id === book.id) setInspectingBook(null)
       showToast(`Libro retirado de la biblioteca.`)
     }
@@ -359,6 +367,39 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
     }
   }
 
+  const handleOpenEdit = async (book: LibraryBook) => {
+    const lacksInfo = !book.synopsis || !book.pages || !book.genre || !book.year || !book.coverUrl || !book.author || book.author === 'Autor desconocido'
+    if (lacksInfo && book.title) {
+      showToast('Completando información desde internet...')
+      try {
+        const query = `${book.title} ${book.author && book.author !== 'Autor desconocido' ? book.author : ''}`.trim()
+        const result = await window.api.searchBook(query)
+        if (result) {
+          const enrichedBook: LibraryBook = {
+            ...book,
+            title: book.title || result.title,
+            author: (!book.author || book.author === 'Autor desconocido') && result.author ? result.author : book.author,
+            coverUrl: book.coverUrl || result.coverUrl || '',
+            pages: book.pages || result.pages || undefined,
+            year: book.year || result.year || undefined,
+            genre: book.genre || result.genre || '',
+            synopsis: book.synopsis || result.synopsis || ''
+          }
+          setEditingBook(enrichedBook)
+          window.api.updateLibraryBook(enrichedBook).then(updated => {
+            setBooks(updated)
+            if (inspectingBook?.id === book.id) setInspectingBook(enrichedBook)
+          }).catch(() => {})
+          showToast('Datos completados desde internet.')
+          return
+        }
+      } catch (err) {
+        console.error('Error auto-enriching on open edit:', err)
+      }
+    }
+    setEditingBook(book)
+  }
+
   const formatFileSize = (bytes: number) => {
     if (!bytes) return '0 KB'
     if (bytes >= 1024 * 1024) {
@@ -385,9 +426,22 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
     const matchesFormat = formatFilter === 'all' ? true : b.format.toLowerCase() === formatFilter.toLowerCase()
 
     return matchesSearch && matchesStatus && matchesFormat
+  }).sort((a, b) => {
+    if (sortBy === 'title-asc') {
+      return (a.title || '').localeCompare(b.title || '', 'es', { sensitivity: 'base' })
+    }
+    if (sortBy === 'title-desc') {
+      return (b.title || '').localeCompare(a.title || '', 'es', { sensitivity: 'base' })
+    }
+    if (sortBy === 'author-asc') {
+      const aAuth = (a.author && a.author !== 'Autor desconocido') ? a.author : 'ZZZ'
+      const bAuth = (b.author && b.author !== 'Autor desconocido') ? b.author : 'ZZZ'
+      return aAuth.localeCompare(bAuth, 'es', { sensitivity: 'base' })
+    }
+    return 0 // 'custom': keeps the books state order (which is persisted by sort_order / reorderLibraryBooks)
   })
 
-  // Partition for shelf display into shelves of 5 books
+  // Partition for shelf display into shelves of 6 books
   const chunkIntoShelves = (arr: LibraryBook[], size: number) => {
     const shelves: LibraryBook[][] = []
     for (let i = 0; i < arr.length; i += size) {
@@ -396,7 +450,7 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
     return shelves
   }
 
-  const shelfRows = chunkIntoShelves(filtered, 5)
+  const shelfRows = chunkIntoShelves(filtered, 6)
   const spineRows = chunkIntoShelves(filtered, 16)
 
   // Extract cover colors dynamically when spines view is active
@@ -485,14 +539,19 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
       {/* Header Banner & Library Summary */}
       <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-[22px] p-6 sm:p-7 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
-          <div className="flex items-center gap-3 mb-1.5">
-            <Library className="w-6 h-6 text-[var(--color-accent)] stroke-[2.2]" />
-            <h2 className="text-[26px] font-bold font-['Bricolage_Grotesque'] text-[var(--color-ink)]">
-              Tu Estantería Digital
-            </h2>
+          <div className="flex items-center gap-3 mb-1.5 flex-wrap">
+            <div className="flex items-center gap-2.5">
+              <Library className="w-6 h-6 text-[var(--color-accent)] stroke-[2.2]" />
+              <h2 className="text-[26px] font-bold font-['Bricolage_Grotesque'] text-[var(--color-ink)]">
+                Tu Biblioteca Digital
+              </h2>
+            </div>
+            <span className="text-[12px] font-bold px-2.5 py-0.5 rounded-full bg-[var(--color-chip)] text-[var(--color-ink)] border border-[var(--color-line)]">
+              {books.length} {books.length === 1 ? 'libro' : 'libros'}
+            </span>
           </div>
           <p className="text-[14px] text-[var(--color-muted)] max-w-[56ch] leading-relaxed">
-            Una biblioteca táctil y visual. Añade libros en EPUB o PDF, disfruta de sus portadas en 3D, pásalos a tu eReader o trasládalos a tus lecturas terminadas con un toque.
+            Tu biblioteca virtual donde guardar todos tus eBooks. Disfruta de sus portadas en 3D, pásalos a tu eReader o trasládalos a tus lecturas terminadas con un toque.
           </p>
 
           {/* Quick Stats Pill Bar */}
@@ -529,7 +588,7 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
                 ? 'bg-[var(--color-ink)] text-[var(--color-cream)] border-transparent' 
                 : 'border-[var(--color-line)] bg-[var(--color-bg)] hover:bg-[var(--color-line)]/50 text-[var(--color-ink)]'
             }`}
-            title="Seleccionar múltiples libros para transferir o exportar en lote"
+            title="Seleccionar múltiples libros para transferir, borrar o exportar en lote"
           >
             {isSelectMode ? (
               <CheckSquare className="w-3.5 h-3.5 stroke-[2.2] text-[var(--color-sky)]" />
@@ -625,7 +684,7 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
                 onClick={async () => {
                   if (filtered.length === 0) return
                   showToast(`Transfiriendo ${filtered.length} libros a ${connectedDevice.name}...`)
-                  const res = await window.api.sendMultipleToDevice(filtered.map(b => b.id))
+                  const res = await window.api.sendMultipleToDevice(filtered.map(b => b.id), connectedDevice.targetFolder)
                   showToast(res.message)
                 }}
                 className="border border-emerald-600/40 hover:bg-emerald-600/10 text-emerald-900 dark:text-emerald-300 font-bold py-2 px-4 rounded-full text-[12px] transition-colors cursor-pointer"
@@ -645,12 +704,16 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
           </div>
           <button
             onClick={async () => {
-              if (books.length > 0) {
-                const res = await window.api.sendToDevice(books[0].id)
-                showToast(res.message)
-                checkConnectedDevice()
+              const dev = await window.api.getConnectedDevice()
+              if (dev && dev.connected) {
+                setConnectedDevice(dev)
+                showToast(`Dispositivo detectado: ${dev.name}`)
               } else {
-                showToast('Primero sube un libro para poder vincular la memoria de tu dispositivo.')
+                const res = await window.api.selectCustomDeviceFolder()
+                if (res.success && res.device) {
+                  setConnectedDevice(res.device)
+                  showToast(`Carpeta de eReader vinculada: ${res.path}`)
+                }
               }
             }}
             className="text-[var(--color-accent)] hover:underline font-semibold cursor-pointer text-[12px]"
@@ -711,6 +774,21 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
             <option value="azw3">AZW3</option>
           </select>
 
+          {/* Sort selector */}
+          <div className="flex items-center gap-1.5 bg-[var(--color-bg)] border border-[var(--color-line)] rounded-full px-2.5 py-1">
+            <ArrowUpDown className="w-3.5 h-3.5 text-[var(--color-muted)] shrink-0" />
+            <select
+              value={sortBy}
+              onChange={e => setSortBy(e.target.value as any)}
+              className="bg-transparent text-[12.5px] font-medium outline-none cursor-pointer text-[var(--color-ink)] pr-1"
+            >
+              <option value="custom">Orden manual</option>
+              <option value="title-asc">Título (A-Z)</option>
+              <option value="title-desc">Título (Z-A)</option>
+              <option value="author-asc">Autor (A-Z)</option>
+            </select>
+          </div>
+
           {/* View Mode Toggle */}
           <div className="flex gap-1 p-0.5 bg-[var(--color-bg)] border border-[var(--color-line)] rounded-full ml-auto sm:ml-2">
             <button
@@ -743,8 +821,27 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
 
       {/* Empty State */}
       {filtered.length === 0 ? (
-        <div className="border-2 border-dashed border-[var(--color-line)] rounded-[22px] p-12 text-center text-[var(--color-muted)] flex flex-col items-center gap-3 bg-[var(--color-surface)]/40 my-6">
-          <div className="w-14 h-14 rounded-full bg-[var(--color-bg)] flex items-center justify-center text-[var(--color-muted)] border border-[var(--color-line)]">
+        <div
+          onClick={() => {
+            if (books.length === 0 && !isUploading) {
+              handleUpload()
+            }
+          }}
+          role={books.length === 0 ? 'button' : undefined}
+          tabIndex={books.length === 0 ? 0 : undefined}
+          onKeyDown={e => {
+            if (books.length === 0 && !isUploading && (e.key === 'Enter' || e.key === ' ')) {
+              e.preventDefault()
+              handleUpload()
+            }
+          }}
+          className={`border-2 border-dashed border-[var(--color-line)] rounded-[22px] p-12 text-center text-[var(--color-muted)] flex flex-col items-center gap-3 bg-[var(--color-surface)]/40 my-6 transition-all ${
+            books.length === 0
+              ? 'cursor-pointer hover:border-[var(--color-accent)] hover:bg-[var(--color-surface)]/75 group'
+              : ''
+          }`}
+        >
+          <div className="w-14 h-14 rounded-full bg-[var(--color-bg)] group-hover:bg-[var(--color-accent)] group-hover:text-[var(--color-on-accent)] group-hover:border-[var(--color-accent)] flex items-center justify-center text-[var(--color-muted)] border border-[var(--color-line)] transition-colors">
             <Library className="w-6 h-6 stroke-[1.8]" />
           </div>
           <p className="font-bold text-[20px] text-[var(--color-ink)] font-['Bricolage_Grotesque']">
@@ -752,12 +849,15 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
           </p>
           <p className="text-[14px] max-w-[48ch] leading-relaxed">
             {books.length === 0 
-              ? 'Pulsa en "Añadir a biblioteca" para colocar tus primeros libros en la estantería. Detectaremos las portadas y los autores automáticamente.'
+              ? 'Haz clic en este recuadro o pulsa en "Añadir a biblioteca" para colocar tus primeros libros en la estantería. Detectaremos las portadas y los autores automáticamente.'
               : 'Prueba a cambiar el texto de búsqueda o el filtro de formato.'}
           </p>
           {books.length === 0 && (
             <button
-              onClick={handleUpload}
+              onClick={e => {
+                e.stopPropagation()
+                handleUpload()
+              }}
               className="mt-3 bg-[var(--color-accent)] text-[var(--color-on-accent)] font-bold py-2.5 px-6 rounded-full text-[13.5px] hover:opacity-90 cursor-pointer shadow-xs inline-flex items-center gap-2"
             >
               <Upload className="w-4 h-4 stroke-[2]" />
@@ -772,7 +872,7 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
         ------------------------------------------------------------- */
         <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-[24px] p-6 sm:p-10 shadow-xs flex flex-col gap-12 my-2 overflow-x-auto">
           {shelfRows.map((row, shelfIdx) => (
-            <div key={shelfIdx} className="relative flex flex-col min-w-[760px]">
+            <div key={shelfIdx} className="relative flex flex-col min-w-[960px]">
               
               {/* Quiet shelf indicator if multiple shelves */}
               {shelfRows.length > 1 && (
@@ -784,14 +884,14 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
                 </div>
               )}
 
-              {/* Row of Books standing flush on the floating rail */}
-              <div className="flex items-end justify-start gap-8 sm:gap-11 px-4 sm:px-6 relative z-10">
+              {/* Row of Books standing flush on the floating rail (exactly 6 books per line) */}
+              <div className="flex items-end justify-between w-full px-4 sm:px-6 relative z-10 flex-nowrap">
                 {row.map((book, bIdx) => {
                   const isRead = book.status === 'read' || readBookIds.includes(book.id)
                   const formatUpper = (book.format || 'EPUB').toUpperCase()
                   const isSelected = selectedBookIds.includes(book.id)
 
-                  const coverColorIdx = (shelfIdx * 5 + bIdx) % 4
+                  const coverColorIdx = (shelfIdx * 6 + bIdx) % 4
                   const coverBg = coverColorIdx === 0 ? 'var(--color-brown)' : coverColorIdx === 1 ? 'var(--color-teal)' : coverColorIdx === 2 ? 'var(--color-green)' : 'var(--color-sky)'
                   const coverFg = coverColorIdx === 3 ? 'var(--color-teal)' : 'var(--color-cream)'
                   const coverLetters = (book.title || 'LI').substring(0, 2).toUpperCase()
@@ -804,7 +904,25 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
                         e.dataTransfer.setData('text/plain', book.id)
                         setDraggedBookId(book.id)
                       }}
-                      onDragEnd={() => setDraggedBookId(null)}
+                      onDragEnd={() => {
+                        setDraggedBookId(null)
+                        setDragOverTargetId(null)
+                      }}
+                      onDragOver={(e) => {
+                        e.preventDefault()
+                        if (draggedBookId && draggedBookId !== book.id) {
+                          setDragOverTargetId(book.id)
+                        }
+                      }}
+                      onDragLeave={() => {
+                        if (dragOverTargetId === book.id) {
+                          setDragOverTargetId(null)
+                        }
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        handleBookDropReorder(book.id)
+                      }}
                       onClick={(e) => {
                         if (isSelectMode) {
                           toggleSelectBook(book.id, e)
@@ -812,10 +930,10 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
                           setInspectingBook(book)
                         }
                       }}
-                      className={`group relative flex flex-col items-center cursor-pointer select-none transition-all duration-300 ease-out hover:-translate-y-3 ${
+                      className={`group relative flex flex-col items-center cursor-pointer select-none transition-all duration-300 ease-out hover:-translate-y-3 shrink-0 ${
                         draggedBookId === book.id ? 'opacity-40 scale-95' : ''
-                      }`}
-                      style={{ width: '138px' }}
+                      } ${dragOverTargetId === book.id ? 'ring-2 ring-[var(--color-accent)] ring-offset-4 rounded-xl scale-105' : ''}`}
+                      style={{ width: '130px', flexShrink: 0 }}
                     >
                       {/* Top Badges */}
                       <div className="absolute -top-3 right-1.5 z-30">
@@ -910,6 +1028,9 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
                     </div>
                   )
                 })}
+                {Array.from({ length: 6 - row.length }).map((_, i) => (
+                  <div key={`empty-lib-slot-${i}`} style={{ width: '138px', flexShrink: 0 }} />
+                ))}
               </div>
 
               {/* Ultra-Minimalist Floating Shelf Rail */}
@@ -919,7 +1040,7 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
               </div>
 
               {/* Minimalist Typographic Labels beneath shelf */}
-              <div className="flex items-start justify-start gap-8 sm:gap-11 px-4 sm:px-6 pt-2.5 pb-2">
+              <div className="flex items-start justify-between w-full px-4 sm:px-6 pt-2.5 pb-2 flex-nowrap">
                 {row.map((book) => (
                   <div
                     key={book.id}
@@ -930,8 +1051,8 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
                         setInspectingBook(book)
                       }
                     }}
-                    className="cursor-pointer group/label text-center px-0.5"
-                    style={{ width: '138px' }}
+                    className="cursor-pointer group/label text-center px-0.5 shrink-0"
+                    style={{ width: '138px', flexShrink: 0 }}
                   >
                     <p className="text-[12.5px] font-semibold text-[var(--color-ink)] line-clamp-1 leading-snug group-hover/label:text-[var(--color-accent)] transition-colors">
                       {book.title}
@@ -940,6 +1061,9 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
                       {book.author && book.author !== 'Autor desconocido' ? book.author : 'Autor desconocido'}
                     </p>
                   </div>
+                ))}
+                {Array.from({ length: 6 - row.length }).map((_, i) => (
+                  <div key={`empty-lib-lbl-${i}`} style={{ width: '138px', flexShrink: 0 }} />
                 ))}
               </div>
 
@@ -952,7 +1076,11 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
         /* -------------------------------------------------------------
            CREATIVE BOOK SPINES VIEW (Vista experimental de lomos de libros)
         ------------------------------------------------------------- */
-        <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-[24px] p-6 sm:p-10 shadow-xs flex flex-col gap-14 my-2 overflow-x-auto">
+        <>
+        <div
+          onScroll={() => setHoveredSpine(null)}
+          className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-[24px] p-6 sm:p-10 shadow-xs flex flex-col gap-14 my-2 overflow-x-auto"
+        >
           {spineRows.map((row, shelfIdx) => (
             <div key={shelfIdx} className="relative flex flex-col min-w-[760px]">
               
@@ -989,11 +1117,30 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
                       key={book.id}
                       draggable={true}
                       onDragStart={(e) => {
+                        setHoveredSpine(null)
                         e.dataTransfer.setData('text/plain', book.id)
                         setDraggedBookId(book.id)
                       }}
                       onDragEnd={() => setDraggedBookId(null)}
+                      onMouseEnter={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect()
+                        const clampedX = Math.max(150, Math.min(window.innerWidth - 150, rect.left + rect.width / 2))
+                        const showBelow = rect.top < 170
+                        const yPos = showBelow ? rect.bottom + 12 : rect.top - 18
+                        setHoveredSpine({
+                          book,
+                          pagesCount,
+                          palette,
+                          isRead,
+                          formatUpper,
+                          x: clampedX,
+                          y: yPos,
+                          showBelow
+                        })
+                      }}
+                      onMouseLeave={() => setHoveredSpine(null)}
                       onClick={(e) => {
+                        setHoveredSpine(null)
                         if (isSelectMode) {
                           toggleSelectBook(book.id, e)
                         } else {
@@ -1004,18 +1151,6 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
                         draggedBookId === book.id ? 'opacity-40 scale-95' : ''
                       }`}
                     >
-                      {/* Silk Bookmark Ribbon (Peeking out at the crown for read books) */}
-                      {isRead && (
-                        <div 
-                          className="absolute -top-3 left-1/2 -translate-x-1/2 w-2.5 h-4.5 rounded-t-xs shadow-xs z-10 pointer-events-none"
-                          style={{ 
-                            backgroundColor: palette.ribbon,
-                            clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 50% 75%, 0% 100%)' 
-                          }}
-                          title="Libro leído (marcapáginas de seda)"
-                        />
-                      )}
-
                       {/* Selection checkbox indicator pill */}
                       {(isSelectMode || isSelected) && (
                         <div className={`absolute -top-6 left-1/2 -translate-x-1/2 z-20 w-5 h-5 rounded-md flex items-center justify-center border shadow-xs ${
@@ -1045,6 +1180,16 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
                         <div className="w-full flex flex-col items-center pt-1.5 px-0.5 pointer-events-none">
                           <div className={`w-full h-[3px] rounded-t-xs ${palette.isLight ? 'bg-black/15' : 'bg-black/25'}`}></div>
                           <div className={`w-full h-px mt-1 ${palette.isLight ? 'bg-black/8' : 'bg-white/10'}`}></div>
+                          {isRead && (
+                            <div className="mt-1 flex items-center justify-center">
+                              <span 
+                                className="w-2.5 h-2.5 rounded-full bg-emerald-600/90 text-white flex items-center justify-center shadow-xs"
+                                title="Libro leído"
+                              >
+                                <Check className="w-1.5 h-1.5 stroke-[3.5]" />
+                              </span>
+                            </div>
+                          )}
                         </div>
 
                         {/* Upper embossed rib / nervio */}
@@ -1129,42 +1274,6 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
                         style={{ width: `${spineWidth * 0.9}px` }}
                       />
 
-                      {/* Hover Tooltip Card (Previews cover & full details on hover) */}
-                      <div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-all duration-200 z-50 min-w-[210px] max-w-[260px] bg-[var(--color-surface)] border border-[var(--color-line)] rounded-[14px] p-3 shadow-2xl text-left">
-                        <div className="flex gap-2.5 items-start">
-                          {book.coverUrl ? (
-                            <img 
-                              src={book.coverUrl} 
-                              alt={book.title} 
-                              className="w-[38px] h-[54px] object-cover rounded-[3px] border border-[var(--color-line)] shrink-0 bg-white shadow-xs"
-                            />
-                          ) : (
-                            <div 
-                              className="w-[38px] h-[54px] rounded-[3px] flex items-center justify-center font-bold text-[13px] shrink-0 text-white font-['Bricolage_Grotesque'] shadow-xs"
-                              style={{ backgroundColor: palette.bg }}
-                            >
-                              {(book.title || 'LI').substring(0, 2).toUpperCase()}
-                            </div>
-                          )}
-                          <div className="flex-1 min-w-0">
-                            <p className="font-bold text-[13px] text-[var(--color-ink)] line-clamp-2 leading-snug font-['Bricolage_Grotesque']">
-                              {book.title}
-                            </p>
-                            <p className="text-[11.5px] text-[var(--color-muted)] truncate mt-0.5">
-                              {book.author && book.author !== 'Autor desconocido' ? book.author : 'Autor desconocido'}
-                            </p>
-                            <div className="flex items-center gap-1.5 mt-1 text-[10px] text-[var(--color-muted)]">
-                              <span className="font-bold uppercase text-[var(--color-accent)]">{formatUpper}</span>
-                              {pagesCount && <span>• {pagesCount} págs.</span>}
-                              {isRead && <span className="text-emerald-600 font-bold">• Leído</span>}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="mt-2 pt-2 border-t border-[var(--color-line)]/50 text-[10.5px] text-[var(--color-muted)] text-center font-medium">
-                          Haz clic para inspeccionar / Abrir
-                        </div>
-                      </div>
-
                     </div>
                   )
                 })}
@@ -1179,6 +1288,54 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
             </div>
           ))}
         </div>
+
+        {/* Fixed Hover Tooltip Card (Rendered outside overflow-x-auto so it is never clipped) */}
+        {hoveredSpine && (
+          <div
+            className="fixed z-50 pointer-events-none min-w-[225px] max-w-[275px] bg-[var(--color-surface)] border border-[var(--color-line)] rounded-[14px] p-3.5 shadow-2xl text-left transition-opacity duration-150"
+            style={{
+              left: `${hoveredSpine.x}px`,
+              top: `${hoveredSpine.y}px`,
+              transform: hoveredSpine.showBelow ? 'translate(-50%, 0)' : 'translate(-50%, -100%)'
+            }}
+          >
+            <div className="flex gap-3 items-start">
+              {hoveredSpine.book.coverUrl ? (
+                <img
+                  src={hoveredSpine.book.coverUrl}
+                  alt={hoveredSpine.book.title}
+                  className="w-[42px] h-[60px] object-cover rounded-[4px] border border-[var(--color-line)] shrink-0 bg-white shadow-xs"
+                />
+              ) : (
+                <div
+                  className="w-[42px] h-[60px] rounded-[4px] flex items-center justify-center font-bold text-[14px] shrink-0 font-['Bricolage_Grotesque'] shadow-xs"
+                  style={{ backgroundColor: hoveredSpine.palette.bg, color: hoveredSpine.palette.text }}
+                >
+                  {(hoveredSpine.book.title || 'LI').substring(0, 2).toUpperCase()}
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-[13.5px] text-[var(--color-ink)] line-clamp-2 leading-snug font-['Bricolage_Grotesque']">
+                  {hoveredSpine.book.title}
+                </p>
+                <p className="text-[11.5px] text-[var(--color-muted)] truncate mt-0.5">
+                  {hoveredSpine.book.author && hoveredSpine.book.author !== 'Autor desconocido'
+                    ? hoveredSpine.book.author
+                    : 'Autor desconocido'}
+                </p>
+                <div className="flex items-center gap-1.5 mt-1.5 text-[10.5px] text-[var(--color-muted)]">
+                  <span className="font-bold uppercase text-[var(--color-accent)]">{hoveredSpine.formatUpper}</span>
+                  {hoveredSpine.pagesCount && <span>• {hoveredSpine.pagesCount} págs.</span>}
+                  {hoveredSpine.isRead && <span className="text-emerald-600 font-bold">• Leído</span>}
+                </div>
+              </div>
+            </div>
+            <div className="mt-2.5 pt-2 border-t border-[var(--color-line)]/50 text-[10.5px] text-[var(--color-muted)] text-center font-medium">
+              Haz clic para inspeccionar / Abrir
+            </div>
+          </div>
+        )}
+        </>
 
       ) : (
 
@@ -1209,7 +1366,25 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
                   e.dataTransfer.setData('text/plain', book.id)
                   setDraggedBookId(book.id)
                 }}
-                onDragEnd={() => setDraggedBookId(null)}
+                onDragEnd={() => {
+                  setDraggedBookId(null)
+                  setDragOverTargetId(null)
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  if (draggedBookId && draggedBookId !== book.id) {
+                    setDragOverTargetId(book.id)
+                  }
+                }}
+                onDragLeave={() => {
+                  if (dragOverTargetId === book.id) {
+                    setDragOverTargetId(null)
+                  }
+                }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  handleBookDropReorder(book.id)
+                }}
                 onClick={(e) => {
                   if (isSelectMode) {
                     toggleSelectBook(book.id, e)
@@ -1221,7 +1396,7 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
                   isSelected 
                     ? 'bg-[var(--color-accent)]/8' 
                     : ''
-                } ${draggedBookId === book.id ? 'opacity-40 scale-[0.99]' : ''}`}
+                } ${draggedBookId === book.id ? 'opacity-40 scale-[0.99]' : ''} ${dragOverTargetId === book.id ? 'border-2 border-dashed border-[var(--color-accent)] bg-[var(--color-accent)]/10 rounded-xl' : ''}`}
               >
                 {/* Left Section: Checkbox + Miniature Cover + Title & Author */}
                 <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
@@ -1540,7 +1715,7 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
                   </button>
                   <button
                     onClick={() => {
-                      setEditingBook(inspectingBook)
+                      handleOpenEdit(inspectingBook)
                     }}
                     className="hover:underline hover:text-[var(--color-ink)] cursor-pointer inline-flex items-center gap-1"
                   >
@@ -1639,15 +1814,46 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
               </div>
 
               <div>
-                <label className="block text-[12px] font-bold text-[var(--color-muted)] uppercase tracking-wider mb-1">
-                  URL de portada
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[12px] font-bold text-[var(--color-muted)] uppercase tracking-wider">
+                    Foto de portada
+                  </label>
+                  {editingBook.coverUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setEditingBook({ ...editingBook, coverUrl: '' })}
+                      className="text-[11px] text-red-600 hover:underline cursor-pointer"
+                    >
+                      Quitar foto
+                    </button>
+                  )}
+                </div>
+
+                <input
+                  ref={libraryCoverInputRef}
+                  type="file"
+                  accept="image/png, image/jpeg, image/jpg, image/webp"
+                  onChange={handleLibraryCoverUpload}
+                  className="hidden"
+                />
+
+                <div className="flex gap-2 items-center mb-1.5">
+                  <button
+                    type="button"
+                    onClick={() => libraryCoverInputRef.current?.click()}
+                    className="px-3 py-1.5 rounded-[8px] bg-[var(--color-bg)] border border-[var(--color-line)] hover:border-[var(--color-accent)] text-[12px] font-medium text-[var(--color-ink)] flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs"
+                  >
+                    <Upload className="w-3.5 h-3.5 text-[var(--color-accent)]" />
+                    <span>Subir imagen (JPG, PNG)</span>
+                  </button>
+                </div>
+
                 <input 
                   type="text" 
-                  value={editingBook.coverUrl || ''}
+                  value={editingBook.coverUrl?.startsWith('data:') ? 'Imagen local cargada' : (editingBook.coverUrl || '')}
                   onChange={e => setEditingBook({ ...editingBook, coverUrl: e.target.value })}
-                  placeholder="https://..."
-                  className="w-full bg-[var(--color-bg)] border border-[var(--color-line)] rounded-[12px] p-2.5 text-[14px] focus:outline-[var(--color-green)]"
+                  placeholder="O escribe una URL (https://...)"
+                  className="w-full bg-[var(--color-bg)] border border-[var(--color-line)] rounded-[12px] p-2.5 text-[13px] focus:outline-[var(--color-green)]"
                 />
               </div>
 
@@ -1703,7 +1909,7 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
                   type="submit"
                   className="py-2.5 px-5 rounded-full bg-[var(--color-accent)] text-[var(--color-on-accent)] font-bold text-[13px] hover:opacity-90 cursor-pointer shadow-xs"
                 >
-                  Guardar cambios
+                  Aceptar
                 </button>
               </div>
             </form>
@@ -1714,10 +1920,10 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
          FLOATING MULTI-SELECTION BAR (When books are selected)
       ============================================================= */}
       {selectedBookIds.length > 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-[var(--color-ink)] text-[var(--color-cream)] px-5 py-3 rounded-full shadow-2xl border border-white/10 flex items-center gap-3.5 text-[13px] animate-fade-in backdrop-blur-md">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-[var(--color-ink)] text-[var(--color-cream)] px-5 py-3 rounded-full shadow-2xl border border-white/10 flex flex-wrap items-center justify-center gap-3 text-[13px] animate-fade-in backdrop-blur-md">
           <span className="font-bold flex items-center gap-1.5 pr-2 border-r border-white/20">
             <CheckSquare className="w-4 h-4 text-[var(--color-sky)]" />
-            <span>{selectedBookIds.length} {selectedBookIds.length === 1 ? 'libro seleccionado' : 'libros seleccionados'}</span>
+            <span>{selectedBookIds.length} {selectedBookIds.length === 1 ? 'seleccionado' : 'seleccionados'}</span>
           </span>
 
           {/* Select all toggle */}
@@ -1733,7 +1939,7 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
           <button
             onClick={handleTransferSelectionToDevice}
             className="font-bold hover:text-[var(--color-sky)] transition-colors flex items-center gap-1.5 cursor-pointer py-1 px-2.5 rounded-lg hover:bg-white/10"
-            title="Transferir libros seleccionados a la memoria del eReader"
+            title={connectedDevice ? `Transferir libros seleccionados a ${connectedDevice.name}` : 'Conecta un eReader para transferir los libros seleccionados'}
           >
             <Tablet className="w-4 h-4" />
             <span>Pasar a {connectedDevice ? connectedDevice.name : 'eReader'}</span>
@@ -1759,12 +1965,22 @@ export default function LibraryView({ onMarkAsRead, readBookIds }: LibraryViewPr
             <span>Exportar</span>
           </button>
 
+          {/* Delete selection */}
+          <button
+            onClick={handleDeleteSelection}
+            className="font-bold text-red-300 hover:text-red-200 transition-colors flex items-center gap-1.5 cursor-pointer py-1 px-2.5 rounded-lg hover:bg-red-500/20"
+            title="Borrar todos los títulos seleccionados de la biblioteca"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span>Borrar</span>
+          </button>
+
           {/* Clear selection */}
           <button
             onClick={() => { setSelectedBookIds([]); setIsSelectMode(false); }}
             className="text-white/60 hover:text-white transition-colors cursor-pointer text-[12px] pl-2 border-l border-white/20"
           >
-            Desmarcar
+            Cancelar
           </button>
         </div>
       )}

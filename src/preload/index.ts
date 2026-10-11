@@ -14,6 +14,7 @@ const api = {
   uploadLibraryBook: () => ipcRenderer.invoke('upload-library-book'),
   updateLibraryBook: (bookOrId: any, updates?: any) => ipcRenderer.invoke('update-library-book', bookOrId, updates),
   deleteLibraryBook: (id: string) => ipcRenderer.invoke('delete-library-book', id),
+  deleteMultipleLibraryBooks: (ids: string[]) => ipcRenderer.invoke('delete-multiple-library-books', ids),
   openLibraryBook: (id: string) => ipcRenderer.invoke('open-library-book', id),
   showLibraryBookInFolder: (id: string) => ipcRenderer.invoke('show-library-book-in-folder', id),
   sendToDevice: (id: string) => ipcRenderer.invoke('send-to-device', id),
@@ -21,10 +22,19 @@ const api = {
   getConnectedDevice: () => ipcRenderer.invoke('get-connected-device'),
   shareByEmail: (id: string, options?: { toEmail?: string }) => ipcRenderer.invoke('share-by-email', id, options),
   enrichLibraryBook: (id: string, query?: string) => ipcRenderer.invoke('enrich-library-book', id, query),
+  reorderLibraryBooks: (orderedIds: string[]) => ipcRenderer.invoke('reorder-library-books', orderedIds),
   exportLibrary: (format: 'json' | 'csv' | 'html' | 'files', selectedIds?: string[]) => ipcRenderer.invoke('export-library', format, selectedIds),
-  exportReadings: (format: 'json' | 'csv' | 'markdown' | 'html') => ipcRenderer.invoke('export-readings', format),
+  exportReadings: (format: 'excel' | 'pdf' | 'json' | 'csv' | 'markdown' | 'html') => ipcRenderer.invoke('export-readings', format),
+  importReadings: (formatFilter?: 'excel' | 'csv' | 'md' | 'json' | 'all') => ipcRenderer.invoke('import-readings', formatFilter),
   importReadingsJson: () => ipcRenderer.invoke('import-readings-json'),
-  selectCustomDeviceFolder: () => ipcRenderer.invoke('select-custom-device-folder')
+  importLibraryFolder: () => ipcRenderer.invoke('import-library-folder'),
+  getLibraryStorageDir: () => ipcRenderer.invoke('get-library-storage-dir'),
+  selectLibraryStorageDir: () => ipcRenderer.invoke('select-library-storage-dir'),
+  resetLibraryStorageDir: () => ipcRenderer.invoke('reset-library-storage-dir'),
+  openLibraryStorageDir: () => ipcRenderer.invoke('open-library-storage-dir'),
+  setAppTheme: (themeName: string) => ipcRenderer.invoke('set-app-theme', themeName),
+  selectCustomDeviceFolder: () => ipcRenderer.invoke('select-custom-device-folder'),
+  getRecommendations: (seed?: number) => ipcRenderer.invoke('get-recommendations', seed)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

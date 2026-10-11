@@ -1,5 +1,5 @@
 import { ElectronAPI } from '@electron-toolkit/preload'
-import { Book, LibraryBook } from '../renderer/src/types'
+import { Book, LibraryBook, RecommendedBook } from '../renderer/src/types'
 
 declare global {
   interface Window {
@@ -16,6 +16,7 @@ declare global {
       uploadLibraryBook: () => Promise<LibraryBook | null>;
       updateLibraryBook: (bookOrId: string | LibraryBook, updates?: Partial<LibraryBook>) => Promise<LibraryBook[]>;
       deleteLibraryBook: (id: string) => Promise<LibraryBook[]>;
+      deleteMultipleLibraryBooks: (ids: string[]) => Promise<LibraryBook[]>;
       openLibraryBook: (id: string) => Promise<boolean>;
       showLibraryBookInFolder: (id: string) => Promise<boolean>;
       sendToDevice: (id: string) => Promise<{ success: boolean; message: string }>;
@@ -23,10 +24,19 @@ declare global {
       getConnectedDevice: () => Promise<{ connected: boolean; name: string; volumePath: string; targetFolder: string } | null>;
       shareByEmail: (id: string, options?: { toEmail?: string }) => Promise<{ success: boolean; message: string }>;
       enrichLibraryBook: (id: string, query?: string) => Promise<LibraryBook | null>;
+      reorderLibraryBooks: (orderedIds: string[]) => Promise<LibraryBook[]>;
       exportLibrary: (format: 'json' | 'csv' | 'html' | 'files', selectedIds?: string[]) => Promise<{ success: boolean; count?: number; path?: string; message: string }>;
-      exportReadings: (format: 'json' | 'csv' | 'markdown' | 'html') => Promise<{ success: boolean; path?: string; message: string }>;
+      exportReadings: (format: 'excel' | 'pdf' | 'json' | 'csv' | 'markdown' | 'html') => Promise<{ success: boolean; path?: string; message: string }>;
+      importReadings: (formatFilter?: 'excel' | 'csv' | 'md' | 'json' | 'all') => Promise<{ success: boolean; count?: number; message: string }>;
       importReadingsJson: () => Promise<{ success: boolean; count?: number; message: string }>;
+      importLibraryFolder: () => Promise<{ success: boolean; count?: number; totalScanned?: number; message: string }>;
+      getLibraryStorageDir: () => Promise<{ path: string; defaultPath: string; isCustom: boolean; themeName?: string }>;
+      selectLibraryStorageDir: () => Promise<{ success: boolean; path?: string; isCustom?: boolean; migratedCount?: number; message: string }>;
+      resetLibraryStorageDir: () => Promise<{ success: boolean; path?: string; isCustom?: boolean; message: string }>;
+      openLibraryStorageDir: () => Promise<{ success: boolean; path?: string }>;
+      setAppTheme: (themeName: string) => Promise<{ success: boolean; themeName: string }>;
       selectCustomDeviceFolder: () => Promise<{ success: boolean; path?: string; device?: { connected: boolean; name: string; volumePath: string; targetFolder: string }; message?: string }>;
+      getRecommendations: (seed?: number) => Promise<{ recommendations: RecommendedBook[]; basedOnCount: number }>;
     }
   }
 }

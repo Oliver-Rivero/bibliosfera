@@ -3,6 +3,14 @@ import { join, dirname, posix } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import fs from 'fs'
+import {
+  initDatabase,
+  getStoredBooks as sqliteGetBooks,
+  setStoredBooks as sqliteSetBooks,
+  getStoredLibrary as sqliteGetLibrary,
+  setStoredLibrary as sqliteSetLibrary,
+  flushToDisk
+} from './db'
 
 function getBooksFile() {
   const newPath = join(app.getPath('userData'), 'bibliosfera-books.json')
@@ -17,8 +25,49 @@ function getBooksFile() {
   return newPath
 }
 
+function getConfigFile() {
+  return join(app.getPath('userData'), 'bibliosfera-config.json')
+}
+
+function getAppConfig(): { libraryStorageDir?: string; themeName?: string } {
+  try {
+    const file = getConfigFile()
+    if (fs.existsSync(file)) {
+      return JSON.parse(fs.readFileSync(file, 'utf-8'))
+    }
+  } catch (e) {}
+  return {}
+}
+
+function setAppConfig(updates: { libraryStorageDir?: string; themeName?: string }) {
+  try {
+    const current = getAppConfig()
+    const next = { ...current, ...updates }
+    fs.writeFileSync(getConfigFile(), JSON.stringify(next, null, 2), 'utf-8')
+    return next
+  } catch (e) {
+    console.error('Error saving app config:', e)
+    return getAppConfig()
+  }
+}
+
+function getDefaultLibraryFilesDir() {
+  return join(app.getPath('userData'), 'library_files')
+}
+
 function getLibraryFilesDir() {
-  const dir = join(app.getPath('userData'), 'library_files')
+  const cfg = getAppConfig()
+  if (cfg.libraryStorageDir && cfg.libraryStorageDir.trim()) {
+    try {
+      if (!fs.existsSync(cfg.libraryStorageDir)) {
+        fs.mkdirSync(cfg.libraryStorageDir, { recursive: true })
+      }
+      return cfg.libraryStorageDir
+    } catch (e) {
+      console.error('Custom libraryStorageDir inaccessible, falling back to default:', e)
+    }
+  }
+  const dir = getDefaultLibraryFilesDir()
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true })
   }
@@ -106,41 +155,37 @@ function detectPagesFromFile(filePath: string, format?: string): string {
   return ''
 }
 
-function getStoredBooks() {
+function getStoredBooks(): any[] {
   try {
-    const file = getBooksFile()
-    if (!fs.existsSync(file)) {
-      fs.writeFileSync(file, JSON.stringify([]))
-      return []
+    const sqliteBooks = sqliteGetBooks()
+    if (Array.isArray(sqliteBooks) && sqliteBooks.length > 0) {
+      return sqliteBooks
     }
-    const books = JSON.parse(fs.readFileSync(file, 'utf-8'))
-    let modified = false
-    const library = getStoredLibrary()
-    for (const b of books) {
-      if (!b.pages && b.libraryBookId) {
-        const libBook = library.find((lb: any) => lb.id === b.libraryBookId)
-        if (libBook?.pages) {
-          b.pages = libBook.pages
-          modified = true
-        }
+    // Fallback to JSON if SQLite was just created and not yet populated
+    const file = getBooksFile()
+    if (fs.existsSync(file)) {
+      const books = JSON.parse(fs.readFileSync(file, 'utf-8'))
+      if (Array.isArray(books) && books.length > 0) {
+        sqliteSetBooks(books)
+        return books
       }
     }
-    if (modified) {
-      try {
-        fs.writeFileSync(file, JSON.stringify(books, null, 2))
-      } catch (we) {}
-    }
-    return books
+    return sqliteBooks || []
   } catch (e) {
+    console.error('Error in getStoredBooks:', e)
     return []
   }
 }
 
 function setStoredBooks(books: any[]) {
   try {
-    fs.writeFileSync(getBooksFile(), JSON.stringify(books, null, 2))
+    sqliteSetBooks(books)
+    // Keep JSON file synced as an automatic backup
+    try {
+      fs.writeFileSync(getBooksFile(), JSON.stringify(books, null, 2))
+    } catch {}
   } catch (e) {
-    console.error("Error saving books:", e)
+    console.error('Error saving books:', e)
   }
 }
 
@@ -159,41 +204,35 @@ function getLibraryFile() {
 
 function getStoredLibrary(): any[] {
   try {
-    const file = getLibraryFile()
-    if (!fs.existsSync(file)) {
-      fs.writeFileSync(file, JSON.stringify([]))
-      return []
+    const sqliteLib = sqliteGetLibrary()
+    if (Array.isArray(sqliteLib) && sqliteLib.length > 0) {
+      return sqliteLib
     }
-    const library = JSON.parse(fs.readFileSync(file, 'utf-8'))
-    let modified = false
-    for (const b of library) {
-      if (!b.pages && b.fileName) {
-        const filePath = join(getLibraryFilesDir(), b.fileName)
-        if (fs.existsSync(filePath)) {
-          const detected = detectPagesFromFile(filePath, b.format)
-          if (detected) {
-            b.pages = detected
-            modified = true
-          }
-        }
+    // Fallback to JSON if SQLite was just created
+    const file = getLibraryFile()
+    if (fs.existsSync(file)) {
+      const library = JSON.parse(fs.readFileSync(file, 'utf-8'))
+      if (Array.isArray(library) && library.length > 0) {
+        sqliteSetLibrary(library)
+        return library
       }
     }
-    if (modified) {
-      try {
-        fs.writeFileSync(file, JSON.stringify(library, null, 2))
-      } catch (we) {}
-    }
-    return library
+    return sqliteLib || []
   } catch (e) {
+    console.error('Error in getStoredLibrary:', e)
     return []
   }
 }
 
 function setStoredLibrary(books: any[]) {
   try {
-    fs.writeFileSync(getLibraryFile(), JSON.stringify(books, null, 2))
+    sqliteSetLibrary(books)
+    // Keep JSON file synced as an automatic backup
+    try {
+      fs.writeFileSync(getLibraryFile(), JSON.stringify(books, null, 2))
+    } catch {}
   } catch (e) {
-    console.error("Error saving library:", e)
+    console.error('Error saving library:', e)
   }
 }
 
@@ -243,9 +282,9 @@ function createWindow(): void {
     minWidth: 1050,
     minHeight: 700,
     center: true,
-    show: false,
+    show: true,
     autoHideMenuBar: true,
-    ...(process.platform === 'linux' ? { icon } : {}),
+    icon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
@@ -254,6 +293,7 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+    mainWindow.focus()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -264,7 +304,7 @@ function createWindow(): void {
   // HMR for renderer base on electron-vite cli.
   // Load the remote URL for development or the local html file for production.
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL']!)
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
@@ -272,8 +312,20 @@ function createWindow(): void {
 
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.oliver.bibliosfera')
+
+  try {
+    await initDatabase(app.getPath('userData'))
+  } catch (err) {
+    console.error('[SQLite] Error initializing database, falling back to JSON store:', err)
+  }
+
+  if (process.platform === 'darwin' && app.dock) {
+    try {
+      app.dock.setIcon(icon)
+    } catch (e) {}
+  }
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -289,20 +341,24 @@ app.whenReady().then(() => {
     if (book.coverUrl && (book.coverUrl.startsWith('http://') || book.coverUrl.startsWith('https://'))) {
       book.coverUrl = await downloadAndSaveCover(book.id, book.coverUrl)
     }
-    if (!book.pages) {
-      if (book.libraryBookId) {
-        const library = getStoredLibrary()
-        const libBook = library.find((lb: any) => lb.id === book.libraryBookId)
-        if (libBook?.pages) book.pages = libBook.pages
-      }
-      if (!book.pages && book.title) {
-        try {
-          const online = await searchBookOnline(book.author ? `${book.title} ${book.author}` : book.title)
-          if (online?.pages) book.pages = online.pages
-        } catch (e) {}
+    // Enrich missing fields from library book if available (instant local lookup)
+    if (book.libraryBookId) {
+      const library = getStoredLibrary()
+      const libBook = library.find((lb: any) => lb.id === book.libraryBookId)
+      if (libBook) {
+        if (!book.pages && libBook.pages) book.pages = libBook.pages
+        if (!book.synopsis && libBook.synopsis) book.synopsis = libBook.synopsis
+        if (!book.genre && libBook.genre) book.genre = libBook.genre
+        if (!book.year && libBook.year) book.year = libBook.year
+        if (!book.coverUrl && libBook.coverUrl) book.coverUrl = libBook.coverUrl
       }
     }
-    books.push(book)
+    const existingIndex = books.findIndex(b => b.id === book.id)
+    if (existingIndex >= 0) {
+      books[existingIndex] = book
+    } else {
+      books.push(book)
+    }
     setStoredBooks(books)
     return books
   })
@@ -310,13 +366,15 @@ app.whenReady().then(() => {
   ipcMain.handle('update-book', async (_, updatedBook) => {
     const books = getStoredBooks()
     const index = books.findIndex(b => b.id === updatedBook.id)
-    if (index !== -1) {
-      if (updatedBook.coverUrl && (updatedBook.coverUrl.startsWith('http://') || updatedBook.coverUrl.startsWith('https://'))) {
-        updatedBook.coverUrl = await downloadAndSaveCover(updatedBook.id, updatedBook.coverUrl)
-      }
-      books[index] = updatedBook
-      setStoredBooks(books)
+    if (updatedBook.coverUrl && (updatedBook.coverUrl.startsWith('http://') || updatedBook.coverUrl.startsWith('https://'))) {
+      updatedBook.coverUrl = await downloadAndSaveCover(updatedBook.id, updatedBook.coverUrl)
     }
+    if (index !== -1) {
+      books[index] = updatedBook
+    } else {
+      books.push(updatedBook)
+    }
+    setStoredBooks(books)
     return books
   })
 
@@ -345,79 +403,115 @@ app.whenReady().then(() => {
       pages: ''
     }
 
+    const customHeaders = {
+      'User-Agent': 'Bibliosfera/1.0 (https://github.com/Oliver-Rivero/bibliosfera; contact@bibliosfera.app)'
+    }
+
+    const cleanText = (text: string) => {
+      if (!text) return ''
+      return text
+        .replace(/<[^>]+>/g, '')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+    }
+
+    const normalize = (str: string) =>
+      (str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s]/g, ' ').trim()
+
+    const normalizedQuery = normalize(query)
+    const queryWords = normalizedQuery.split(/\s+/).filter(w => w.length > 2)
+
     try {
-      // 1. OpenLibrary search
+      // 1. PRIMARY SOURCE: Google Books API (Gold standard for authentic book synopsis and metadata)
+      try {
+        const gbUrl = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=5&printType=books`
+        const gbRes = await net.fetch(gbUrl, { headers: customHeaders })
+        if (gbRes.ok) {
+          const gbData = await gbRes.json()
+          if (Array.isArray(gbData.items) && gbData.items.length > 0) {
+            // Find best matching item based on title similarity
+            const bestItem = gbData.items.find((item: any) => {
+              const itemTitle = normalize(item.volumeInfo?.title || '')
+              return queryWords.some(w => itemTitle.includes(w))
+            }) || gbData.items[0]
+
+            const vi = bestItem.volumeInfo || {}
+            if (vi.title) result.title = vi.title
+            if (vi.authors && vi.authors.length > 0) result.author = vi.authors.join(', ')
+            if (vi.publishedDate) result.year = vi.publishedDate.substring(0, 4)
+            if (vi.pageCount) result.pages = String(vi.pageCount)
+            if (vi.categories && vi.categories.length > 0) result.genre = vi.categories.slice(0, 2).join(', ')
+
+            // Real authentic synopsis from Google Books!
+            if (vi.description && vi.description.length > 20) {
+              result.synopsis = cleanText(vi.description)
+            }
+
+            // ISBN
+            if (Array.isArray(vi.industryIdentifiers)) {
+              const isbn13 = vi.industryIdentifiers.find((id: any) => id.type === 'ISBN_13')
+              const isbn10 = vi.industryIdentifiers.find((id: any) => id.type === 'ISBN_10')
+              result.isbn = isbn13?.identifier || isbn10?.identifier || ''
+            }
+
+            // High-res cover thumbnail
+            if (vi.imageLinks?.thumbnail || vi.imageLinks?.smallThumbnail) {
+              let thumb = vi.imageLinks.thumbnail || vi.imageLinks.smallThumbnail
+              thumb = thumb.replace('http://', 'https://')
+              result.coverUrl = thumb
+            }
+          }
+        }
+      } catch (gbErr) {
+        console.error('Google Books error:', gbErr)
+      }
+
+      // 2. SECONDARY SOURCE: OpenLibrary API (fills missing pages, cover or synopsis)
       try {
         const url = `https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=5`
-        const olRes = await net.fetch(url)
+        const olRes = await net.fetch(url, { headers: customHeaders })
         if (olRes.ok) {
           const olData = await olRes.json()
-          const doc = olData.docs?.find((d: any) => d.author_name && d.cover_i) || olData.docs?.[0]
+          const doc = olData.docs?.find((d: any) => {
+            const docTitle = normalize(d.title || '')
+            return queryWords.some(w => docTitle.includes(w))
+          }) || olData.docs?.[0]
+
           if (doc) {
-            if (doc.title) result.title = doc.title
-            result.author = doc.author_name ? doc.author_name.join(', ') : ''
-            result.year = doc.first_publish_year ? String(doc.first_publish_year) : ''
-            result.isbn = doc.isbn && doc.isbn.length > 0 ? doc.isbn[0] : ''
-            if (doc.subject && doc.subject.length > 0) {
-              result.genre = doc.subject.slice(0, 2).join(', ')
-            }
-            if (doc.cover_i) {
+            if (!result.author && doc.author_name) result.author = doc.author_name.join(', ')
+            if (!result.year && doc.first_publish_year) result.year = String(doc.first_publish_year)
+            if (!result.isbn && doc.isbn?.length > 0) result.isbn = doc.isbn[0]
+            if (!result.genre && doc.subject?.length > 0) result.genre = doc.subject.slice(0, 2).join(', ')
+            if (!result.coverUrl && doc.cover_i) {
               result.coverUrl = `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg`
             }
-            if (doc.number_of_pages_median) {
-              result.pages = String(doc.number_of_pages_median)
-            } else if (doc.number_of_pages) {
-              result.pages = String(doc.number_of_pages)
+            if (!result.pages) {
+              if (doc.number_of_pages_median) result.pages = String(doc.number_of_pages_median)
+              else if (doc.number_of_pages) result.pages = String(doc.number_of_pages)
             }
 
-            // Also check OpenLibrary editions for page count if not yet found
-            if (!result.pages && doc.key) {
+            // Only fetch OpenLibrary work description if synopsis is still missing
+            if (!result.synopsis && doc.key) {
               try {
-                const edRes = await net.fetch(`https://openlibrary.org${doc.key}/editions.json?limit=10`)
-                if (edRes.ok) {
-                  const edData = await edRes.json()
-                  const withPages = edData.entries?.find((e: any) => e.number_of_pages && e.number_of_pages > 10)
-                  if (withPages) {
-                    result.pages = String(withPages.number_of_pages)
-                  }
-                }
-              } catch (ee) {}
-            }
-
-            // Also check OpenLibrary ISBN for page count
-            if (!result.pages && doc.isbn && doc.isbn.length > 0) {
-              try {
-                const isbnRes = await net.fetch(`https://openlibrary.org/isbn/${doc.isbn[0]}.json`)
-                if (isbnRes.ok) {
-                  const isbnData = await isbnRes.json()
-                  if (isbnData.number_of_pages) {
-                    result.pages = String(isbnData.number_of_pages)
-                  }
-                }
-              } catch (ie) {}
-            }
-
-            if (doc.key) {
-              try {
-                const workRes = await net.fetch(`https://openlibrary.org${doc.key}.json`)
+                const workRes = await net.fetch(`https://openlibrary.org${doc.key}.json`, { headers: customHeaders })
                 if (workRes.ok) {
                   const workData = await workRes.json()
                   if (workData.description) {
-                    result.synopsis = typeof workData.description === 'string' 
-                      ? workData.description 
+                    const desc = typeof workData.description === 'string'
+                      ? workData.description
                       : workData.description.value || ''
-                  }
-                  if (!result.author && workData.authors?.[0]?.author?.key) {
-                    const authorRes = await net.fetch(`https://openlibrary.org${workData.authors[0].author.key}.json`)
-                    if (authorRes.ok) {
-                      const authorData = await authorRes.json()
-                      if (authorData.name) result.author = authorData.name
+                    if (desc && desc.length > 25) {
+                      result.synopsis = cleanText(desc)
                     }
                   }
                 }
-              } catch (we) {
-                console.error('Error fetching work JSON:', we)
-              }
+              } catch (we) {}
             }
           }
         }
@@ -425,53 +519,40 @@ app.whenReady().then(() => {
         console.error('OpenLibrary error:', e)
       }
 
-      // 2. Wikipedia fallback for synopsis/author if missing
-      try {
-        const wikiSearchUrl = `https://es.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&utf8=`
-        const wikiSearchRes = await net.fetch(wikiSearchUrl)
-        if (wikiSearchRes.ok) {
-          const wsData = await wikiSearchRes.json()
-          const first = wsData.query?.search?.[0]
-          if (first) {
-            if (!result.author && first.snippet) {
-              const cleanSnippet = first.snippet.replace(/<[^>]+>/g, '')
-              const escapedQ = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-              const m = cleanSnippet.match(new RegExp(escapedQ + '[,\\s]+([^,\\d\\.\\*]+)', 'i'))
-              if (m && m[1] && m[1].trim()) {
-                const candidate = m[1].trim()
-                if (!candidate.toLowerCase().includes('editorial') && candidate.length > 2 && candidate.length < 50) {
-                  result.author = candidate
-                }
-              }
-            }
+      // 3. WIKIPEDIA (STRICT LITERARY FALLBACK ONLY)
+      // Note: Only query Wikipedia if synopsis is STILL missing, and strictly require the article to be about a book/novel!
+      if (!result.synopsis) {
+        try {
+          const wikiSearchUrl = `https://es.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent('"' + query + '" libro OR novela')}&format=json&utf8=`
+          const wikiSearchRes = await net.fetch(wikiSearchUrl, { headers: customHeaders })
+          if (wikiSearchRes.ok) {
+            const wsData = await wikiSearchRes.json()
+            const hits = wsData.query?.search || []
+            // Look for a hit that specifically mentions being a literary work or book
+            const bookHit = hits.find((h: any) => {
+              const snippet = (h.snippet || '').toLowerCase()
+              return snippet.includes('novela') || snippet.includes('libro') || snippet.includes('obra') || snippet.includes('escrita por') || snippet.includes('publicada')
+            })
 
-            const cleanTitle = first.title.toLowerCase()
-            const cleanQ = query.toLowerCase()
-            const isMatch = cleanTitle.includes(cleanQ) || cleanQ.includes(cleanTitle)
-
-            if (isMatch) {
-              const sumUrl = `https://es.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(first.title)}`
-              const sumRes = await net.fetch(sumUrl)
+            if (bookHit) {
+              const sumUrl = `https://es.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(bookHit.title)}`
+              const sumRes = await net.fetch(sumUrl, { headers: customHeaders })
               if (sumRes.ok) {
                 const sumData = await sumRes.json()
-                if (sumData.title && (!result.title || result.title.toLowerCase() === query.toLowerCase())) {
-                  result.title = sumData.title
-                }
-                if (!result.synopsis && sumData.extract) {
-                  result.synopsis = sumData.extract
-                }
-                if (!result.coverUrl && sumData.thumbnail?.source) {
-                  result.coverUrl = sumData.thumbnail.source
-                }
-                if (!result.author && sumData.description && !sumData.description.toLowerCase().includes('editorial')) {
-                  result.author = sumData.description.replace(/^(novela|libro|obra|ensayo)\s+(de|por)\s+/i, '')
+                const desc = (sumData.description || '').toLowerCase()
+                // Verify again that this page summary is actually a book or novel
+                if (desc.includes('novela') || desc.includes('libro') || desc.includes('obra') || desc.includes('ensayo') || desc.includes('cuento') || desc.includes('relato')) {
+                  if (sumData.extract && sumData.extract.length > 30) {
+                    result.synopsis = cleanText(sumData.extract)
+                  }
+                  if (!result.coverUrl && sumData.thumbnail?.source) {
+                    result.coverUrl = sumData.thumbnail.source
+                  }
                 }
               }
             }
           }
-        }
-      } catch (e) {
-        console.error('Wikipedia error:', e)
+        } catch (we) {}
       }
     } catch (e) {
       console.error('Search error:', e)
@@ -610,6 +691,113 @@ app.whenReady().then(() => {
     return library
   })
 
+  async function importAndAnalyzeBookFile(sourcePath: string, existingLibrary: any[]): Promise<any | null> {
+    try {
+      const ext = (sourcePath.split('.').pop() || 'epub').toLowerCase()
+      const rawFileName = sourcePath.split(/[/\\]/).pop() || 'libro'
+      const { clean, possibleTitle, possibleAuthor } = parseFilenameMetadata(rawFileName)
+
+      // Avoid importing exact duplicate file if already in library
+      const normClean = clean.toLowerCase().trim()
+      const alreadyExists = existingLibrary.some(b => {
+        const bNorm = (b.title || '').toLowerCase().trim()
+        return b.format === ext && bNorm && (bNorm === normClean || bNorm === (possibleTitle || '').toLowerCase().trim())
+      })
+      if (alreadyExists) {
+        return null
+      }
+
+      const id = `${Date.now()}_${Math.random().toString(36).substring(2, 6)}`
+      const targetFileName = `${id}.${ext}`
+      const targetPath = join(getLibraryFilesDir(), targetFileName)
+
+      // Copy physical file to library folder (unless sourcePath is already targetPath)
+      if (sourcePath !== targetPath) {
+        fs.copyFileSync(sourcePath, targetPath)
+      }
+      const stats = fs.statSync(targetPath)
+
+      // 1. Try EPUB internal metadata
+      const epubMeta = ext === 'epub' ? extractEpubMetadata(targetPath) : null
+
+      // 2. Local page detection from file (works for both PDF and EPUB)
+      let pages = detectPagesFromFile(targetPath, ext) || epubMeta?.pages || ''
+
+      let title = epubMeta?.title || possibleTitle || clean
+      let author = epubMeta?.author || possibleAuthor || 'Autor desconocido'
+      let coverUrl = ''
+      let year = ''
+      let genre = ''
+      let synopsis = ''
+
+      // If EPUB has embedded cover, save it
+      if (epubMeta?.coverBuffer) {
+        try {
+          const coverPath = join(getCoversDir(), `lib_${id}.jpg`)
+          fs.writeFileSync(coverPath, epubMeta.coverBuffer)
+          coverUrl = `data:${epubMeta.coverMime || 'image/jpeg'};base64,${epubMeta.coverBuffer.toString('base64')}`
+        } catch (e) {
+          console.error('Error saving epub cover buffer:', e)
+        }
+      }
+
+      // 3. Search online using OpenLibrary / Wikipedia to get missing metadata (author, cover, synopsis, genre, year, pages)
+      const searchQueries = [
+        epubMeta?.title && epubMeta?.author ? `${epubMeta.title} ${epubMeta.author}` : null,
+        epubMeta?.title || null,
+        clean,
+        possibleTitle && possibleAuthor ? `${possibleTitle} ${possibleAuthor}` : null,
+        possibleTitle || null
+      ].filter((q): q is string => Boolean(q && q.trim().length > 1))
+
+      for (const queryToTry of searchQueries) {
+        if (title && author && author !== 'Autor desconocido' && coverUrl && synopsis && genre && year && pages) {
+          break
+        }
+        try {
+          const online = await searchBookOnline(queryToTry)
+          if (online) {
+            if ((!title || title === clean) && online.title && online.title.length > 1) {
+              title = online.title
+            }
+            if ((!author || author === 'Autor desconocido') && online.author) {
+              author = online.author
+            }
+            if (!pages && online.pages) pages = online.pages
+            if (!year && online.year) year = online.year
+            if (!genre && online.genre) genre = online.genre
+            if (!synopsis && online.synopsis) synopsis = online.synopsis
+
+            if (!coverUrl && online.coverUrl) {
+              coverUrl = await downloadAndSaveCover(`lib_${id}`, online.coverUrl)
+            }
+          }
+        } catch (se) {
+          console.error('Error auto-searching book metadata for query:', queryToTry, se)
+        }
+      }
+
+      return {
+        id,
+        title,
+        author: author || 'Autor desconocido',
+        format: ext,
+        fileName: targetFileName,
+        fileSize: stats.size,
+        dateAdded: new Date().toISOString(),
+        status: 'pending',
+        coverUrl,
+        pages,
+        year,
+        genre,
+        synopsis
+      }
+    } catch (err) {
+      console.error('Error importing book file:', sourcePath, err)
+      return null
+    }
+  }
+
   ipcMain.handle('upload-library-book', async () => {
     const res = await dialog.showOpenDialog({
       title: 'Añadir libro electrónico a tu Biblioteca',
@@ -622,106 +810,194 @@ app.whenReady().then(() => {
 
     if (res.canceled || res.filePaths.length === 0) return null
 
-    const sourcePath = res.filePaths[0]
-    const ext = (sourcePath.split('.').pop() || 'epub').toLowerCase()
-    const rawFileName = sourcePath.split(/[/\\]/).pop() || 'libro'
-    const id = Date.now().toString()
-    const targetFileName = `${id}.${ext}`
-    const targetPath = join(getLibraryFilesDir(), targetFileName)
+    const library = getStoredLibrary()
+    const newBook = await importAndAnalyzeBookFile(res.filePaths[0], [])
+    if (!newBook) return null
 
-    // Copy physical file to library folder
-    fs.copyFileSync(sourcePath, targetPath)
-    const stats = fs.statSync(targetPath)
+    library.unshift(newBook)
+    setStoredLibrary(library)
+    return newBook
+  })
 
-    // 1. Try EPUB internal metadata
-    const epubMeta = ext === 'epub' ? extractEpubMetadata(targetPath) : null
+  // Import an entire folder of e-book files as a library, analyzing each file for metadata
+  ipcMain.handle('import-library-folder', async () => {
+    const dirRes = await dialog.showOpenDialog({
+      title: 'Seleccionar carpeta con archivos de libros para importar y analizar',
+      buttonLabel: 'Importar y analizar carpeta',
+      properties: ['openDirectory']
+    })
 
-    // 2. Local page detection from file (works for both PDF and EPUB)
-    let pages = detectPagesFromFile(targetPath, ext) || epubMeta?.pages || ''
-
-    // 3. Parse filename
-    const { clean, possibleTitle, possibleAuthor } = parseFilenameMetadata(rawFileName)
-
-    let title = epubMeta?.title || possibleTitle || clean
-    let author = epubMeta?.author || possibleAuthor || 'Autor desconocido'
-    let coverUrl = ''
-    let year = ''
-    let genre = ''
-    let synopsis = ''
-
-    // If EPUB has embedded cover, save it
-    if (epubMeta?.coverBuffer) {
-      try {
-        const coverPath = join(getCoversDir(), `lib_${id}.jpg`)
-        fs.writeFileSync(coverPath, epubMeta.coverBuffer)
-        coverUrl = `data:${epubMeta.coverMime || 'image/jpeg'};base64,${epubMeta.coverBuffer.toString('base64')}`
-      } catch (e) {
-        console.error('Error saving epub cover buffer:', e)
-      }
+    if (dirRes.canceled || dirRes.filePaths.length === 0) {
+      return { success: false, count: 0, message: 'Importación cancelada.' }
     }
 
-    // 3. Search online using OpenLibrary / Wikipedia to separate title, author and find cover
-    const searchQuery = epubMeta?.title 
-      ? (epubMeta.author ? `${epubMeta.title} ${epubMeta.author}` : epubMeta.title)
-      : clean
+    const rootFolder = dirRes.filePaths[0]
+    const validExts = new Set(['epub', 'pdf', 'mobi', 'azw3', 'txt', 'cbz', 'cbr'])
+    const foundFiles: string[] = []
 
-    try {
-      const online = await searchBookOnline(searchQuery)
-      if (online) {
-        if (online.title && online.title.length > 1) {
-          title = online.title
-        }
-        if (online.author && (!author || author === 'Autor desconocido')) {
-          author = online.author
-        }
-        if (online.pages && !pages) pages = online.pages
-        if (online.year && !year) year = online.year
-        if (online.genre && !genre) genre = online.genre
-        if (online.synopsis && !synopsis) synopsis = online.synopsis
-
-        if (!coverUrl && online.coverUrl) {
-          coverUrl = await downloadAndSaveCover(`lib_${id}`, online.coverUrl)
-        }
-      }
-    } catch (se) {
-      console.error('Error auto-searching book metadata:', se)
-    }
-
-    // Secondary fallback search if author still unknown
-    if ((!author || author === 'Autor desconocido') && clean !== searchQuery) {
+    const scanFolderRecursive = (dir: string, depth = 0) => {
+      if (depth > 3) return
       try {
-        const online2 = await searchBookOnline(clean)
-        if (online2) {
-          if (online2.title) title = online2.title
-          if (online2.author) author = online2.author
-          if (online2.coverUrl && !coverUrl) {
-            coverUrl = await downloadAndSaveCover(`lib_${id}`, online2.coverUrl)
+        const entries = fs.readdirSync(dir, { withFileTypes: true })
+        for (const entry of entries) {
+          if (entry.name.startsWith('.') || entry.name.startsWith('._')) continue
+          const fullPath = join(dir, entry.name)
+          if (entry.isDirectory()) {
+            scanFolderRecursive(fullPath, depth + 1)
+          } else if (entry.isFile()) {
+            const ext = (entry.name.split('.').pop() || '').toLowerCase()
+            if (validExts.has(ext)) {
+              foundFiles.push(fullPath)
+            }
           }
-          if (online2.pages && !pages) pages = online2.pages
         }
       } catch (e) {}
     }
 
-    const newBook = {
-      id,
-      title,
-      author: author || 'Autor desconocido',
-      format: ext,
-      fileName: targetFileName,
-      fileSize: stats.size,
-      dateAdded: new Date().toISOString(),
-      status: 'pending',
-      coverUrl,
-      pages,
-      year,
-      genre,
-      synopsis
+    scanFolderRecursive(rootFolder)
+
+    if (foundFiles.length === 0) {
+      return {
+        success: false,
+        count: 0,
+        message: 'No se encontraron archivos compatibles (.epub, .pdf, .mobi, .azw3, .txt, .cbz, .cbr) en la carpeta seleccionada.'
+      }
     }
 
     const library = getStoredLibrary()
-    library.unshift(newBook)
-    setStoredLibrary(library)
-    return newBook
+    let importedCount = 0
+    let skippedCount = 0
+
+    for (const filePath of foundFiles) {
+      const analyzed = await importAndAnalyzeBookFile(filePath, library)
+      if (analyzed) {
+        library.unshift(analyzed)
+        importedCount++
+      } else {
+        skippedCount++
+      }
+    }
+
+    if (importedCount > 0) {
+      setStoredLibrary(library)
+    }
+
+    const skippedMsg = skippedCount > 0 ? ` (${skippedCount} omitidos por estar ya en la biblioteca)` : ''
+    return {
+      success: true,
+      count: importedCount,
+      totalScanned: foundFiles.length,
+      message: `¡Análisis completado! Se han importado y catalogado ${importedCount} de ${foundFiles.length} libros encontrados${skippedMsg}.`
+    }
+  })
+
+  // Library Storage Folder Management
+  ipcMain.handle('get-library-storage-dir', () => {
+    const currentPath = getLibraryFilesDir()
+    const defaultPath = getDefaultLibraryFilesDir()
+    const cfg = getAppConfig()
+    return {
+      path: currentPath,
+      defaultPath,
+      isCustom: Boolean(cfg.libraryStorageDir && cfg.libraryStorageDir !== defaultPath),
+      themeName: cfg.themeName || 'elegante'
+    }
+  })
+
+  ipcMain.handle('select-library-storage-dir', async () => {
+    const oldDir = getLibraryFilesDir()
+    const dirRes = await dialog.showOpenDialog({
+      title: 'Elegir carpeta de almacenamiento para la Biblioteca digital',
+      buttonLabel: 'Usar como carpeta de Biblioteca',
+      defaultPath: oldDir,
+      properties: ['openDirectory', 'createDirectory']
+    })
+
+    if (dirRes.canceled || dirRes.filePaths.length === 0) {
+      return { success: false, message: 'Operación cancelada.' }
+    }
+
+    const newDir = dirRes.filePaths[0]
+    if (newDir === oldDir) {
+      return {
+        success: true,
+        path: newDir,
+        isCustom: newDir !== getDefaultLibraryFilesDir(),
+        message: 'La carpeta seleccionada ya es la carpeta de almacenamiento actual.'
+      }
+    }
+
+    try {
+      if (!fs.existsSync(newDir)) {
+        fs.mkdirSync(newDir, { recursive: true })
+      }
+      // Migrate existing library files to the new storage folder
+      const library = getStoredLibrary()
+      let migrated = 0
+      for (const book of library) {
+        if (!book.fileName) continue
+        const src = join(oldDir, book.fileName)
+        const dest = join(newDir, book.fileName)
+        if (fs.existsSync(src) && !fs.existsSync(dest)) {
+          try {
+            fs.copyFileSync(src, dest)
+            migrated++
+          } catch (e) {}
+        }
+      }
+
+      setAppConfig({ libraryStorageDir: newDir })
+      return {
+        success: true,
+        path: newDir,
+        isCustom: newDir !== getDefaultLibraryFilesDir(),
+        migratedCount: migrated,
+        message: `¡Carpeta de almacenamiento actualizada!\nUbicación: ${newDir}${migrated > 0 ? `\n(${migrated} archivos trasladados a la nueva carpeta)` : ''}`
+      }
+    } catch (e: any) {
+      return { success: false, message: `No se pudo cambiar la carpeta de almacenamiento: ${e.message}` }
+    }
+  })
+
+  ipcMain.handle('reset-library-storage-dir', async () => {
+    const oldDir = getLibraryFilesDir()
+    const defaultDir = getDefaultLibraryFilesDir()
+    if (oldDir !== defaultDir) {
+      try {
+        if (!fs.existsSync(defaultDir)) {
+          fs.mkdirSync(defaultDir, { recursive: true })
+        }
+        const library = getStoredLibrary()
+        for (const book of library) {
+          if (!book.fileName) continue
+          const src = join(oldDir, book.fileName)
+          const dest = join(defaultDir, book.fileName)
+          if (fs.existsSync(src) && !fs.existsSync(dest)) {
+            try {
+              fs.copyFileSync(src, dest)
+            } catch (e) {}
+          }
+        }
+      } catch (e) {}
+    }
+    setAppConfig({ libraryStorageDir: '' })
+    return {
+      success: true,
+      path: defaultDir,
+      isCustom: false,
+      message: `Se ha restaurado la carpeta de almacenamiento predeterminada:\n${defaultDir}`
+    }
+  })
+
+  ipcMain.handle('open-library-storage-dir', () => {
+    const dir = getLibraryFilesDir()
+    shell.openPath(dir)
+    return { success: true, path: dir }
+  })
+
+  ipcMain.handle('set-app-theme', (_, themeName: string) => {
+    setAppConfig({ themeName })
+    return { success: true, themeName }
   })
 
   ipcMain.handle('enrich-library-book', async (_, id, customQuery) => {
@@ -773,6 +1049,27 @@ app.whenReady().then(() => {
     return library
   })
 
+  ipcMain.handle('reorder-library-books', (_, orderedIds: string[]) => {
+    const library = getStoredLibrary()
+    const map = new Map(library.map(b => [b.id, b]))
+    const newOrder: any[] = []
+    orderedIds.forEach((id, idx) => {
+      const b = map.get(id)
+      if (b) {
+        b.sortOrder = idx
+        newOrder.push(b)
+        map.delete(id)
+      }
+    })
+    // Append any books that weren't in orderedIds at the end
+    map.forEach(b => {
+      b.sortOrder = newOrder.length
+      newOrder.push(b)
+    })
+    setStoredLibrary(newOrder)
+    return newOrder
+  })
+
   ipcMain.handle('delete-library-book', (_, id) => {
     const library = getStoredLibrary()
     const book = library.find(b => b.id === id)
@@ -786,7 +1083,42 @@ app.whenReady().then(() => {
         console.error('Error eliminando archivo físico de biblioteca:', e)
       }
     }
+    try {
+      const coverPath = join(getCoversDir(), `lib_${id}.jpg`)
+      if (fs.existsSync(coverPath)) {
+        fs.unlinkSync(coverPath)
+      }
+    } catch (e) {}
     const filtered = library.filter(b => b.id !== id)
+    setStoredLibrary(filtered)
+    return filtered
+  })
+
+  ipcMain.handle('delete-multiple-library-books', (_, ids: string[]) => {
+    if (!Array.isArray(ids) || ids.length === 0) return getStoredLibrary()
+    const idSet = new Set(ids)
+    const library = getStoredLibrary()
+    for (const book of library) {
+      if (idSet.has(book.id)) {
+        if (book.fileName) {
+          try {
+            const filePath = join(getLibraryFilesDir(), book.fileName)
+            if (fs.existsSync(filePath)) {
+              fs.unlinkSync(filePath)
+            }
+          } catch (e) {
+            console.error('Error eliminando archivo físico de biblioteca:', e)
+          }
+        }
+        try {
+          const coverPath = join(getCoversDir(), `lib_${book.id}.jpg`)
+          if (fs.existsSync(coverPath)) {
+            fs.unlinkSync(coverPath)
+          }
+        } catch (e) {}
+      }
+    }
+    const filtered = library.filter(b => !idSet.has(b.id))
     setStoredLibrary(filtered)
     return filtered
   })
@@ -889,6 +1221,51 @@ app.whenReady().then(() => {
       } catch (e) {
         console.error('Error scanning /Volumes:', e)
       }
+    } else if (process.platform === 'win32') {
+      try {
+        const letters = ['D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z']
+        for (const l of letters) {
+          const root = `${l}:\\`
+          try {
+            if (!fs.existsSync(root)) continue
+            const kindleDocs = join(root, 'documents')
+            const koboFolder = join(root, '.kobo')
+            const genericBooks = join(root, 'books')
+            const genericEbooks = join(root, 'ebooks')
+            const genericMyFiles = join(root, 'my files', 'books')
+
+            if (fs.existsSync(kindleDocs)) {
+              return {
+                connected: true,
+                name: `Kindle (${l}:)`,
+                volumePath: root,
+                targetFolder: kindleDocs
+              }
+            }
+            if (fs.existsSync(koboFolder)) {
+              return {
+                connected: true,
+                name: `Kobo (${l}:)`,
+                volumePath: root,
+                targetFolder: fs.existsSync(genericBooks) ? genericBooks : root
+              }
+            }
+            if (fs.existsSync(genericBooks) || fs.existsSync(genericEbooks) || fs.existsSync(genericMyFiles)) {
+              const target = fs.existsSync(genericBooks) ? genericBooks :
+                             fs.existsSync(genericEbooks) ? genericEbooks :
+                             fs.existsSync(genericMyFiles) ? genericMyFiles : root
+              return {
+                connected: true,
+                name: `eReader / USB (${l}:)`,
+                volumePath: root,
+                targetFolder: target
+              }
+            }
+          } catch {}
+        }
+      } catch (e) {
+        console.error('Error scanning Windows drives:', e)
+      }
     }
     return null
   }
@@ -909,18 +1286,13 @@ app.whenReady().then(() => {
     }
 
     const detected = getConnectedEReader()
-    let targetDir = detected ? detected.targetFolder : ''
+    const targetDir = detected ? detected.targetFolder : ''
 
     if (!targetDir) {
-      const dirRes = await dialog.showOpenDialog({
-        title: 'Selecciona la carpeta "documents" o raíz de tu eReader / USB',
-        buttonLabel: 'Copiar a esta carpeta',
-        properties: ['openDirectory']
-      })
-      if (dirRes.canceled || dirRes.filePaths.length === 0) {
-        return { success: false, message: 'Operación cancelada' }
+      return {
+        success: false,
+        message: 'No hay ningún eReader conectado. Conecta un eReader a tu equipo para realizar la transferencia.'
       }
-      targetDir = dirRes.filePaths[0]
     }
 
     try {
@@ -943,18 +1315,14 @@ app.whenReady().then(() => {
     }
     const library = getStoredLibrary()
     const detected = getConnectedEReader()
-    let targetDir = customTargetFolder || (detected ? detected.targetFolder : '')
+    const targetDir = customTargetFolder || (detected ? detected.targetFolder : '')
 
     if (!targetDir) {
-      const dirRes = await dialog.showOpenDialog({
-        title: 'Selecciona la memoria principal o carpeta "documents" de tu eReader',
-        buttonLabel: 'Transferir a esta carpeta',
-        properties: ['openDirectory']
-      })
-      if (dirRes.canceled || dirRes.filePaths.length === 0) {
-        return { success: false, count: 0, message: 'Operación cancelada' }
+      return {
+        success: false,
+        count: 0,
+        message: 'No hay ningún eReader conectado. Conecta un eReader a tu equipo para realizar la transferencia.'
       }
-      targetDir = dirRes.filePaths[0]
     }
 
     let copiedCount = 0
@@ -1043,11 +1411,12 @@ app.whenReady().then(() => {
 
     if (!attachedWithMailApp) {
       shell.showItemInFolder(filePath)
-      const mailto = `mailto:${encodeURIComponent(recipient)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body + '\n\n(Puedes arrastrar el archivo resaltado en el Finder para adjuntarlo).')}`
+      const fmName = process.platform === 'win32' ? 'el Explorador de archivos' : 'el Finder'
+      const mailto = `mailto:${encodeURIComponent(recipient)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body + `\n\n(Puedes arrastrar el archivo resaltado en ${fmName} para adjuntarlo).`)}`
       shell.openExternal(mailto)
       return {
         success: true,
-        message: 'Se ha abierto tu cliente de correo. El archivo ha sido copiado al portapapeles y resaltado en el Finder para que puedas adjuntarlo fácilmente.'
+        message: `Se ha abierto tu cliente de correo. El archivo del libro se ha seleccionado en ${fmName} para que puedas adjuntarlo fácilmente.`
       }
     }
 
@@ -1243,13 +1612,212 @@ app.whenReady().then(() => {
 </html>`
   }
 
-  ipcMain.handle('export-readings', async (_, format: 'json' | 'csv' | 'markdown' | 'html') => {
+  function escapeXml(str: any): string {
+    if (str === null || str === undefined) return ''
+    return String(str)
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;')
+  }
+
+  function unescapeXml(str: string): string {
+    if (!str) return ''
+    return str
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(parseInt(dec, 10)))
+      .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+      .replace(/&amp;/g, '&')
+  }
+
+  function generateReadingsXlsx(books: any[], outPath: string): void {
+    const cp = require('child_process')
+    const tempDir = join(app.getPath('temp'), `bibliosfera_xlsx_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`)
+    fs.mkdirSync(join(tempDir, '_rels'), { recursive: true })
+    fs.mkdirSync(join(tempDir, 'xl', '_rels'), { recursive: true })
+    fs.mkdirSync(join(tempDir, 'xl', 'worksheets'), { recursive: true })
+
+    try {
+      const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>`
+
+      const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`
+
+      const workbookXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Mis Lecturas" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>`
+
+      const workbookRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`
+
+      const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="2">
+    <font><sz val="11"/><name val="Calibri"/></font>
+    <font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>
+  </fonts>
+  <fills count="3">
+    <fill><patternFill patternType="none"/></fill>
+    <fill><patternFill patternType="gray125"/></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF285666"/><bgColor indexed="64"/></patternFill></fill>
+  </fills>
+  <borders count="1">
+    <border><left/><right/><top/><bottom/><diagonal/></border>
+  </borders>
+  <cellStyleXfs count="1">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+  </cellStyleXfs>
+  <cellXfs count="2">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+    <xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+  </cellXfs>
+</styleSheet>`
+
+      const headers = [
+        'Título',
+        'Autor',
+        'Valoración',
+        'Fecha de lectura',
+        'Páginas',
+        'Tiempo lectura (min)',
+        'Género',
+        'Año',
+        'ISBN',
+        'Sinopsis',
+        'Comentario'
+      ]
+      const colLetters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K']
+
+      let rowsXml = `<row r="1">`
+      headers.forEach((h, idx) => {
+        rowsXml += `<c r="${colLetters[idx]}1" s="1" t="inlineStr"><is><t>${escapeXml(h)}</t></is></c>`
+      })
+      rowsXml += `</row>`
+
+      books.forEach((b: any, rowIdx: number) => {
+        const r = rowIdx + 2
+        const vals = [
+          { val: b.title || '', isNum: false },
+          { val: b.author || '', isNum: false },
+          { val: b.rating !== undefined && b.rating !== null && b.rating !== '' ? Number(b.rating) : '', isNum: b.rating !== undefined && b.rating !== null && b.rating !== '' && !isNaN(Number(b.rating)) },
+          { val: b.dateRead || '', isNum: false },
+          { val: b.pages && !isNaN(Number(b.pages)) ? Number(b.pages) : (b.pages || ''), isNum: Boolean(b.pages && !isNaN(Number(b.pages))) },
+          { val: b.readingTime || '', isNum: false },
+          { val: b.genre || '', isNum: false },
+          { val: b.year && !isNaN(Number(b.year)) ? Number(b.year) : (b.year || ''), isNum: Boolean(b.year && !isNaN(Number(b.year))) },
+          { val: b.isbn || '', isNum: false },
+          { val: b.synopsis || '', isNum: false },
+          { val: b.comment || '', isNum: false }
+        ]
+        rowsXml += `<row r="${r}">`
+        vals.forEach((cell, cIdx) => {
+          const ref = `${colLetters[cIdx]}${r}`
+          if (cell.isNum) {
+            rowsXml += `<c r="${ref}" s="0" t="n"><v>${cell.val}</v></c>`
+          } else {
+            rowsXml += `<c r="${ref}" s="0" t="inlineStr"><is><t xml:space="preserve">${escapeXml(cell.val)}</t></is></c>`
+          }
+        })
+        rowsXml += `</row>`
+      })
+
+      const sheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <cols>
+    <col min="1" max="1" width="34" customWidth="1"/>
+    <col min="2" max="2" width="24" customWidth="1"/>
+    <col min="3" max="3" width="14" customWidth="1"/>
+    <col min="4" max="4" width="16" customWidth="1"/>
+    <col min="5" max="5" width="12" customWidth="1"/>
+    <col min="6" max="6" width="18" customWidth="1"/>
+    <col min="7" max="7" width="18" customWidth="1"/>
+    <col min="8" max="8" width="10" customWidth="1"/>
+    <col min="9" max="9" width="16" customWidth="1"/>
+    <col min="10" max="10" width="45" customWidth="1"/>
+    <col min="11" max="11" width="40" customWidth="1"/>
+  </cols>
+  <sheetData>${rowsXml}</sheetData>
+</worksheet>`
+
+      fs.writeFileSync(join(tempDir, '[Content_Types].xml'), contentTypes, 'utf-8')
+      fs.writeFileSync(join(tempDir, '_rels', '.rels'), rootRels, 'utf-8')
+      fs.writeFileSync(join(tempDir, 'xl', 'workbook.xml'), workbookXml, 'utf-8')
+      fs.writeFileSync(join(tempDir, 'xl', '_rels', 'workbook.xml.rels'), workbookRels, 'utf-8')
+      fs.writeFileSync(join(tempDir, 'xl', 'styles.xml'), stylesXml, 'utf-8')
+      fs.writeFileSync(join(tempDir, 'xl', 'worksheets', 'sheet1.xml'), sheetXml, 'utf-8')
+
+      if (fs.existsSync(outPath)) {
+        fs.unlinkSync(outPath)
+      }
+      cp.execFileSync('/usr/bin/zip', ['-q', '-r', outPath, '[Content_Types].xml', '_rels', 'xl'], { cwd: tempDir })
+    } finally {
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true })
+      } catch (e) {}
+    }
+  }
+
+  async function generateReadingsPdf(books: any[], outPath: string): Promise<void> {
+    const tempHtmlPath = join(app.getPath('temp'), `bibliosfera_readings_${Date.now()}.html`)
+    const htmlContent = generateReadingsHtml(books)
+    fs.writeFileSync(tempHtmlPath, htmlContent, 'utf-8')
+
+    const pdfWin = new BrowserWindow({
+      width: 960,
+      height: 1280,
+      show: false,
+      webPreferences: {
+        sandbox: false
+      }
+    })
+
+    try {
+      await pdfWin.loadFile(tempHtmlPath)
+      const pdfBuffer = await pdfWin.webContents.printToPDF({
+        printBackground: true,
+        pageSize: 'A4',
+        margins: { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 }
+      })
+      fs.writeFileSync(outPath, pdfBuffer)
+    } finally {
+      try {
+        pdfWin.destroy()
+      } catch (e) {}
+      try {
+        if (fs.existsSync(tempHtmlPath)) fs.unlinkSync(tempHtmlPath)
+      } catch (e) {}
+    }
+  }
+
+  ipcMain.handle('export-readings', async (_, format: 'excel' | 'pdf' | 'json' | 'csv' | 'markdown' | 'html') => {
     const books = getStoredBooks()
     if (books.length === 0) {
       return { success: false, message: 'No hay lecturas registradas para exportar.' }
     }
 
     const extMap: Record<string, string> = {
+      excel: 'xlsx',
+      pdf: 'pdf',
       json: 'json',
       csv: 'csv',
       markdown: 'md',
@@ -1261,8 +1829,10 @@ app.whenReady().then(() => {
       title: `Exportar mis lecturas en formato ${format.toUpperCase()}`,
       defaultPath: `Mis_Lecturas_Bibliosfera_${new Date().toISOString().split('T')[0]}.${defaultExt}`,
       filters: [
-        format === 'json' ? { name: 'JSON', extensions: ['json'] } :
-        format === 'csv' ? { name: 'CSV', extensions: ['csv'] } :
+        format === 'excel' ? { name: 'Libro de Excel (.xlsx)', extensions: ['xlsx'] } :
+        format === 'pdf' ? { name: 'Documento PDF (.pdf)', extensions: ['pdf'] } :
+        format === 'json' ? { name: 'JSON (.json)', extensions: ['json'] } :
+        format === 'csv' ? { name: 'CSV (.csv)', extensions: ['csv'] } :
         format === 'markdown' ? { name: 'Markdown (.md)', extensions: ['md'] } :
         { name: 'Página Web / Imprimible HTML', extensions: ['html'] }
       ]
@@ -1274,10 +1844,14 @@ app.whenReady().then(() => {
     const outPath = saveRes.filePath
 
     try {
-      if (format === 'json') {
+      if (format === 'excel') {
+        generateReadingsXlsx(books, outPath)
+      } else if (format === 'pdf') {
+        await generateReadingsPdf(books, outPath)
+      } else if (format === 'json') {
         fs.writeFileSync(outPath, JSON.stringify(books, null, 2), 'utf-8')
       } else if (format === 'csv') {
-        const header = 'ID,Título,Autor,Puntuación,Fecha de lectura,Tiempo lectura (min),Páginas,Género,Año,Sinopsis,Comentario\n'
+        const header = 'ID,Título,Autor,Valoración,Fecha de lectura,Tiempo lectura (min),Páginas,Género,Año,Sinopsis,Comentario\n'
         const rows = books.map((b: any) => {
           const escapeCsv = (str: string = '') => `"${(str || '').toString().replace(/"/g, '""')}"`
           return [
@@ -1318,8 +1892,8 @@ app.whenReady().then(() => {
 
     if (format === 'files') {
       const dirRes = await dialog.showOpenDialog({
-        title: 'Selecciona la carpeta donde exportar los archivos de e-books (.epub, .pdf)',
-        buttonLabel: 'Exportar libros aquí',
+        title: 'Selecciona la carpeta donde exportar la Biblioteca completa',
+        buttonLabel: 'Exportar biblioteca aquí',
         properties: ['openDirectory', 'createDirectory']
       })
       if (dirRes.canceled || dirRes.filePaths.length === 0) {
@@ -1344,7 +1918,7 @@ app.whenReady().then(() => {
         success: true,
         count,
         path: targetDir,
-        message: `¡Se han exportado ${count} archivos de e-book a la carpeta seleccionada!`
+        message: `¡Se han exportado ${count} archivos de tu Biblioteca a:\n${targetDir}!`
       }
     }
 
@@ -1396,35 +1970,485 @@ app.whenReady().then(() => {
     }
   })
 
-  // Import readings from a previously exported JSON backup
-  ipcMain.handle('import-readings-json', async () => {
+  // -------------------------------------------------------------
+  // Multi-format Readings Importer (Excel .xlsx/.xls, CSV, Markdown .md, JSON)
+  // -------------------------------------------------------------
+  function normalizeDateInput(raw: string): string {
+    if (!raw) return ''
+    const trimmed = String(raw).trim()
+    if (!trimmed || trimmed.toLowerCase().includes('no registrada')) return ''
+    // Check if Excel serial number (e.g. 45366)
+    if (/^\d{5}$/.test(trimmed)) {
+      const serial = parseInt(trimmed, 10)
+      if (serial > 20000 && serial < 75000) {
+        const d = new Date(Math.round((serial - 25569) * 86400 * 1000))
+        if (!isNaN(d.getTime())) return d.toISOString().substring(0, 10)
+      }
+    }
+    // YYYY-MM-DD
+    const isoMatch = trimmed.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/)
+    if (isoMatch) {
+      return `${isoMatch[1]}-${isoMatch[2].padStart(2, '0')}-${isoMatch[3].padStart(2, '0')}`
+    }
+    // DD/MM/YYYY or DD-MM-YYYY
+    const esMatch = trimmed.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/)
+    if (esMatch) {
+      return `${esMatch[3]}-${esMatch[2].padStart(2, '0')}-${esMatch[1].padStart(2, '0')}`
+    }
+    const parsed = new Date(trimmed)
+    if (!isNaN(parsed.getTime())) {
+      return parsed.toISOString().substring(0, 10)
+    }
+    return ''
+  }
+
+  function normalizeRatingInput(raw: any): number {
+    if (raw === undefined || raw === null || raw === '') return 0
+    if (typeof raw === 'number') return Math.min(5, Math.max(0, raw))
+    const s = String(raw).trim()
+    // Match "(4/5)" or "4.5/5"
+    const slashMatch = s.match(/(\d+(?:[.,]\d+)?)\s*\/\s*5/)
+    if (slashMatch) {
+      return Math.min(5, Math.max(0, parseFloat(slashMatch[1].replace(',', '.'))))
+    }
+    // Count ★ stars if present
+    const starCount = (s.match(/★/g) || []).length
+    if (starCount > 0) return Math.min(5, starCount)
+    const num = parseFloat(s.replace(',', '.'))
+    if (!isNaN(num)) return Math.min(5, Math.max(0, num))
+    return 0
+  }
+
+  function parseCsvRows(text: string): string[][] {
+    const clean = text.replace(/^\uFEFF/, '')
+    const firstLine = clean.split(/\r?\n/).find(l => l.trim().length > 0) || ''
+    const commaCount = (firstLine.match(/,/g) || []).length
+    const semiCount = (firstLine.match(/;/g) || []).length
+    const tabCount = (firstLine.match(/\t/g) || []).length
+    const delim = tabCount > commaCount && tabCount > semiCount ? '\t' : semiCount > commaCount ? ';' : ','
+
+    const rows: string[][] = []
+    let currentRow: string[] = []
+    let currentCell = ''
+    let inQuotes = false
+
+    for (let i = 0; i < clean.length; i++) {
+      const ch = clean[i]
+      const next = clean[i + 1]
+      if (inQuotes) {
+        if (ch === '"' && next === '"') {
+          currentCell += '"'
+          i++
+        } else if (ch === '"') {
+          inQuotes = false
+        } else {
+          currentCell += ch
+        }
+      } else {
+        if (ch === '"') {
+          inQuotes = true
+        } else if (ch === delim) {
+          currentRow.push(currentCell.trim())
+          currentCell = ''
+        } else if (ch === '\r' && next === '\n') {
+          currentRow.push(currentCell.trim())
+          if (currentRow.some(c => c !== '')) rows.push(currentRow)
+          currentRow = []
+          currentCell = ''
+          i++
+        } else if (ch === '\n' || ch === '\r') {
+          currentRow.push(currentCell.trim())
+          if (currentRow.some(c => c !== '')) rows.push(currentRow)
+          currentRow = []
+          currentCell = ''
+        } else {
+          currentCell += ch
+        }
+      }
+    }
+    if (currentCell !== '' || currentRow.length > 0) {
+      currentRow.push(currentCell.trim())
+      if (currentRow.some(c => c !== '')) rows.push(currentRow)
+    }
+    return rows
+  }
+
+  function mapTableRowsToBooks(rows: string[][]): any[] {
+    if (rows.length === 0) return []
+    const normHeader = (h: string) =>
+      (h || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]/g, '')
+
+    const firstRowNorm = rows[0].map(normHeader)
+    const hasHeader = firstRowNorm.some(h =>
+      h.includes('titulo') || h.includes('title') || h.includes('autor') || h.includes('author') || h.includes('libro') || h.includes('book')
+    )
+
+    const headers = hasHeader ? firstRowNorm : ['titulo', 'autor', 'valoracion', 'fechadelectura', 'paginas', 'tiempolctura', 'genero', 'ano', 'sinopsis', 'comentario']
+    const dataRows = hasHeader ? rows.slice(1) : rows
+
+    const findCol = (keywords: string[]) => headers.findIndex(h => keywords.some(k => h.includes(k)))
+
+    const idxId = findCol(['id'])
+    const idxTitle = findCol(['titulo', 'title', 'libro', 'book', 'nombre'])
+    const idxAuthor = findCol(['autor', 'author', 'escritor'])
+    const idxRating = findCol(['puntuacion', 'valoracion', 'rating', 'nota', 'estrellas', 'calificacion', 'score'])
+    const idxDate = findCol(['fecha', 'date', 'leido', 'terminado'])
+    const idxTime = findCol(['tiempo', 'time', 'minutos', 'duracion'])
+    const idxPages = findCol(['pagina', 'page', 'pags'])
+    const idxGenre = findCol(['genero', 'genre', 'categoria', 'tematica'])
+    const idxYear = findCol(['ano', 'year', 'publicacion'])
+    const idxIsbn = findCol(['isbn'])
+    const idxSynopsis = findCol(['sinopsis', 'synopsis', 'resumen', 'descripcion'])
+    const idxComment = findCol(['comentario', 'comment', 'opinion', 'nota', 'rese'])
+
+    const result: any[] = []
+    dataRows.forEach((r, idx) => {
+      const title = (idxTitle !== -1 ? r[idxTitle] : r[0] || '').trim()
+      if (!title) return
+      const author = (idxAuthor !== -1 ? r[idxAuthor] : r[1] || '').trim() || 'Autor desconocido'
+      const rating = idxRating !== -1 ? normalizeRatingInput(r[idxRating]) : 0
+      const dateRead = idxDate !== -1 ? normalizeDateInput(r[idxDate]) : ''
+      const readingTime = idxTime !== -1 ? (r[idxTime] || '').replace(/\s*min.*$/i, '').trim() : ''
+      const pages = idxPages !== -1 ? (r[idxPages] || '').replace(/[^\d]/g, '').trim() : ''
+      const genre = idxGenre !== -1 ? (r[idxGenre] || '').trim() : ''
+      const year = idxYear !== -1 ? (r[idxYear] || '').trim() : ''
+      const isbn = idxIsbn !== -1 ? (r[idxIsbn] || '').trim() : ''
+      const synopsis = idxSynopsis !== -1 ? (r[idxSynopsis] || '').trim() : ''
+      const comment = idxComment !== -1 ? (r[idxComment] || '').trim() : ''
+      const id = (idxId !== -1 && r[idxId] ? r[idxId].trim() : '') || `imp_${Date.now()}_${idx}`
+
+      result.push({
+        id,
+        title,
+        author,
+        rating,
+        dateRead,
+        readingTime,
+        pages,
+        genre,
+        year,
+        isbn,
+        synopsis,
+        comment
+      })
+    })
+    return result
+  }
+
+  function parseXlsxFile(filePath: string): any[] {
+    const cp = require('child_process')
+    try {
+      // 1. Check if it's a valid ZIP (.xlsx)
+      const listOut = cp.execFileSync('/usr/bin/unzip', ['-l', filePath], { encoding: 'utf-8' })
+      const sharedStrings: string[] = []
+      if (listOut.includes('xl/sharedStrings.xml')) {
+        try {
+          const ssXml = cp.execFileSync('/usr/bin/unzip', ['-p', filePath, 'xl/sharedStrings.xml'], { encoding: 'utf-8', maxBuffer: 15 * 1024 * 1024 })
+          const siMatches = ssXml.match(/<si[\s>][\s\S]*?<\/si>/g) || []
+          for (const si of siMatches) {
+            const tMatches = si.match(/<t(?:\s+[^>]*)?>([\s\S]*?)<\/t>/g) || []
+            const combined = tMatches
+              .map(t => {
+                const inner = t.replace(/^<t(?:\s+[^>]*)?>/, '').replace(/<\/t>$/, '')
+                return unescapeXml(inner)
+              })
+              .join('')
+            sharedStrings.push(combined)
+          }
+        } catch (e) {}
+      }
+
+      const sheetMatch = listOut.match(/xl\/worksheets\/sheet\d*\.xml/)
+      const sheetEntry = sheetMatch ? sheetMatch[0] : 'xl/worksheets/sheet1.xml'
+      const sheetXml = cp.execFileSync('/usr/bin/unzip', ['-p', filePath, sheetEntry], { encoding: 'utf-8', maxBuffer: 20 * 1024 * 1024 })
+
+      const colRefToIndex = (ref: string): number => {
+        const letters = (ref.match(/^[A-Z]+/i)?.[0] || 'A').toUpperCase()
+        let col = 0
+        for (let i = 0; i < letters.length; i++) {
+          col = col * 26 + (letters.charCodeAt(i) - 64)
+        }
+        return Math.max(0, col - 1)
+      }
+
+      const rows: string[][] = []
+      const rowMatches = sheetXml.match(/<row[\s>][\s\S]*?<\/row>/g) || []
+      for (const rowXml of rowMatches) {
+        const rowCells: string[] = []
+        const cellMatches = rowXml.match(/<c[\s>][\s\S]*?<\/c>/g) || []
+        cellMatches.forEach((cellXml, fallbackIdx) => {
+          const refAttr = cellXml.match(/\br=["']([A-Z]+\d+)["']/i)
+          const colIdx = refAttr ? colRefToIndex(refAttr[1]) : fallbackIdx
+          const typeAttr = cellXml.match(/\bt=["']([^"']+)["']/i)?.[1] || ''
+
+          let val = ''
+          if (typeAttr === 'inlineStr') {
+            const tMatch = cellXml.match(/<t(?:\s+[^>]*)?>([\s\S]*?)<\/t>/)
+            val = tMatch ? unescapeXml(tMatch[1]) : ''
+          } else {
+            const vMatch = cellXml.match(/<v>([\s\S]*?)<\/v>/)
+            const rawV = vMatch ? unescapeXml(vMatch[1]) : ''
+            if (typeAttr === 's') {
+              const sIdx = parseInt(rawV, 10)
+              val = !isNaN(sIdx) && sharedStrings[sIdx] !== undefined ? sharedStrings[sIdx] : rawV
+            } else {
+              val = rawV
+            }
+          }
+          while (rowCells.length <= colIdx) rowCells.push('')
+          rowCells[colIdx] = val.trim()
+        })
+        if (rowCells.some(c => c !== '')) {
+          rows.push(rowCells)
+        }
+      }
+      return mapTableRowsToBooks(rows)
+    } catch (zipErr) {
+      // Fallback: XML 2003 Spreadsheet (.xls) or CSV/TSV saved with .xls extension
+      const rawText = fs.readFileSync(filePath, 'utf-8')
+      if (rawText.includes('<Row') && rawText.includes('<Data')) {
+        const rows: string[][] = []
+        const rowMatches = rawText.match(/<Row[\s>][\s\S]*?<\/Row>/gi) || []
+        for (const rXml of rowMatches) {
+          const dataMatches = rXml.match(/<Data[^>]*>([\s\S]*?)<\/Data>/gi) || []
+          const cells = dataMatches.map(d => unescapeXml(d.replace(/^<Data[^>]*>/i, '').replace(/<\/Data>$/i, '').trim()))
+          if (cells.some(c => c !== '')) rows.push(cells)
+        }
+        return mapTableRowsToBooks(rows)
+      }
+      return mapTableRowsToBooks(parseCsvRows(rawText))
+    }
+  }
+
+  function parseMarkdownReadings(mdText: string): any[] {
+    const books: any[] = []
+    // 1. Check if it contains ### N. Title sections (Bibliosfera Markdown format)
+    const sectionRegex = /^#{2,3}\s+(?:\d+\.\s*)?(.+)$/gm
+    const headings: { title: string; startIndex: number; matchEnd: number }[] = []
+    let m: RegExpExecArray | null
+    while ((m = sectionRegex.exec(mdText)) !== null) {
+      const hTitle = m[1].trim()
+      if (hTitle.toLowerCase().includes('mis lecturas')) continue
+      headings.push({ title: hTitle, startIndex: m.index, matchEnd: m.index + m[0].length })
+    }
+
+    if (headings.length > 0) {
+      headings.forEach((h, idx) => {
+        const end = idx + 1 < headings.length ? headings[idx + 1].startIndex : mdText.length
+        const block = mdText.slice(h.matchEnd, end)
+
+        const extractField = (labelPattern: string): string => {
+          const re = new RegExp(`[-*]\\s*\\*\\*(?:${labelPattern}):?\\*\\*:?\\s*(.+)`, 'i')
+          const match = block.match(re)
+          return match ? match[1].trim() : ''
+        }
+
+        const author = extractField('Autor|Author') || 'Autor desconocido'
+        const ratingRaw = extractField('Puntuaci[oó]n|Valoraci[oó]n|Nota|Rating')
+        const dateRaw = extractField('Fecha de lectura|Fecha|Le[ií]do')
+        const pagesRaw = extractField('P[aá]ginas|Pages')
+        const timeRaw = extractField('Tiempo de lectura|Tiempo')
+        const genre = extractField('G[eé]nero|Genre')
+        const year = extractField('A[ñn]o publicaci[oó]n|A[ñn]o|Year')
+
+        let synopsis = ''
+        const synMatch = block.match(/\*\*Sinopsis:\*\*\s*\n((?:>\s*.*\n?)+)/i)
+        if (synMatch) {
+          synopsis = synMatch[1].replace(/^>\s?/gm, '').trim()
+        }
+
+        let comment = ''
+        const comMatch = block.match(/\*\*(?:Comentarios y notas personales|Comentarios|Opini[oó]n|Notas):\*\*\s*\n((?:>\s*.*\n?)+)/i)
+        if (comMatch) {
+          comment = comMatch[1].replace(/^>\s?/gm, '').trim()
+        }
+
+        books.push({
+          id: `imp_md_${Date.now()}_${idx}`,
+          title: h.title,
+          author,
+          rating: normalizeRatingInput(ratingRaw),
+          dateRead: normalizeDateInput(dateRaw),
+          pages: pagesRaw.replace(/[^\d]/g, ''),
+          readingTime: timeRaw.replace(/\s*min.*$/i, '').trim(),
+          genre,
+          year,
+          synopsis,
+          comment
+        })
+      })
+      return books
+    }
+
+    // 2. Check if Markdown Table (| Título | Autor | ...)
+    const tableLines = mdText
+      .split(/\r?\n/)
+      .map(l => l.trim())
+      .filter(l => l.startsWith('|') && l.endsWith('|'))
+    if (tableLines.length >= 2) {
+      const rows: string[][] = []
+      for (const line of tableLines) {
+        const cells = line
+          .slice(1, -1)
+          .split('|')
+          .map(c => c.trim())
+        // Skip separator row like |---|---|
+        if (cells.every(c => /^[-:]+$/.test(c))) continue
+        rows.push(cells)
+      }
+      return mapTableRowsToBooks(rows)
+    }
+
+    // 3. Fallback: Bullet list (- **Title** - Author)
+    const bulletLines = mdText.split(/\r?\n/).filter(l => /^\s*[-*]\s+/.test(l))
+    bulletLines.forEach((line, idx) => {
+      const cleanLine = line.replace(/^\s*[-*]\s+/, '').replace(/\*\*/g, '').trim()
+      const parts = cleanLine.split(/\s+[-–—]\s+|\s+de\s+/i)
+      if (parts[0]) {
+        books.push({
+          id: `imp_md_${Date.now()}_${idx}`,
+          title: parts[0].trim(),
+          author: parts[1] ? parts[1].trim() : 'Autor desconocido',
+          rating: normalizeRatingInput(cleanLine),
+          dateRead: ''
+        })
+      }
+    })
+    return books
+  }
+
+  async function handleImportReadings(formatFilter?: 'excel' | 'csv' | 'md' | 'json' | 'all') {
+    const filters =
+      formatFilter === 'excel'
+        ? [{ name: 'Excel (.xlsx, .xls)', extensions: ['xlsx', 'xls'] }]
+        : formatFilter === 'csv'
+          ? [{ name: 'CSV (.csv)', extensions: ['csv'] }]
+          : formatFilter === 'md'
+            ? [{ name: 'Markdown (.md)', extensions: ['md', 'markdown'] }]
+            : formatFilter === 'json'
+              ? [{ name: 'JSON (.json)', extensions: ['json'] }]
+              : [
+                  { name: 'Formatos compatibles (Excel, CSV, Markdown, JSON)', extensions: ['xlsx', 'xls', 'csv', 'md', 'markdown', 'json'] },
+                  { name: 'Excel (.xlsx, .xls)', extensions: ['xlsx', 'xls'] },
+                  { name: 'CSV (.csv)', extensions: ['csv'] },
+                  { name: 'Markdown (.md)', extensions: ['md', 'markdown'] },
+                  { name: 'JSON (.json)', extensions: ['json'] }
+                ]
+
     const openRes = await dialog.showOpenDialog({
-      title: 'Seleccionar copia de seguridad JSON de Mis lecturas',
-      filters: [{ name: 'JSON', extensions: ['json'] }],
+      title: 'Importar títulos a Mis lecturas',
+      buttonLabel: 'Importar lecturas',
+      filters,
       properties: ['openFile']
     })
     if (openRes.canceled || openRes.filePaths.length === 0) {
       return { success: false, message: 'Operación cancelada.' }
     }
+
+    const filePath = openRes.filePaths[0]
+    const ext = (filePath.split('.').pop() || '').toLowerCase()
+
     try {
-      const raw = fs.readFileSync(openRes.filePaths[0], 'utf-8')
-      const imported = JSON.parse(raw)
-      if (!Array.isArray(imported)) {
-        return { success: false, message: 'El archivo seleccionado no tiene un formato válido de lista de lecturas.' }
+      let parsedBooks: any[] = []
+      if (ext === 'xlsx' || ext === 'xls') {
+        parsedBooks = parseXlsxFile(filePath)
+      } else if (ext === 'csv') {
+        const raw = fs.readFileSync(filePath, 'utf-8')
+        parsedBooks = mapTableRowsToBooks(parseCsvRows(raw))
+      } else if (ext === 'md' || ext === 'markdown') {
+        const raw = fs.readFileSync(filePath, 'utf-8')
+        parsedBooks = parseMarkdownReadings(raw)
+      } else if (ext === 'json') {
+        const raw = fs.readFileSync(filePath, 'utf-8')
+        const json = JSON.parse(raw)
+        parsedBooks = Array.isArray(json) ? json : Array.isArray(json?.books) ? json.books : []
+      } else {
+        return { success: false, message: `Formato de archivo (.${ext}) no soportado.` }
       }
+
+      if (!Array.isArray(parsedBooks) || parsedBooks.length === 0) {
+        return { success: false, message: 'No se encontraron títulos válidos en el archivo seleccionado.' }
+      }
+
       const current = getStoredBooks()
       let added = 0
-      imported.forEach((b: any) => {
-        if (b && b.title && !current.some(c => c.id === b.id || (c.title === b.title && c.author === b.author))) {
-          current.push(b)
+      const newlyAddedBooks: any[] = []
+
+      for (const b of parsedBooks) {
+        if (!b || !b.title) continue
+        const cleanTitle = String(b.title).trim()
+        if (!cleanTitle) continue
+        const exists = current.some(
+          c =>
+            (b.id && c.id === b.id) ||
+            (c.title?.toLowerCase().trim() === cleanTitle.toLowerCase() &&
+              (!b.author || !c.author || c.author?.toLowerCase().trim() === String(b.author).toLowerCase().trim()))
+        )
+        if (!exists) {
+          const newEntry = {
+            id: b.id || `read_${Date.now()}_${added}`,
+            title: cleanTitle,
+            author: b.author || 'Autor desconocido',
+            rating: typeof b.rating === 'number' ? b.rating : normalizeRatingInput(b.rating),
+            dateRead: b.dateRead || new Date().toISOString().substring(0, 10),
+            readingTime: b.readingTime ? String(b.readingTime) : '',
+            pages: b.pages ? String(b.pages) : '',
+            genre: b.genre || '',
+            year: b.year ? String(b.year) : '',
+            isbn: b.isbn || '',
+            synopsis: b.synopsis || '',
+            comment: b.comment || '',
+            coverUrl: b.coverUrl || ''
+          }
+          current.push(newEntry)
+          newlyAddedBooks.push(newEntry)
           added++
         }
-      })
+      }
+
+      // Enrich up to 10 newly imported books that lack coverUrl or synopsis
+      let enriched = 0
+      for (const nb of newlyAddedBooks) {
+        if ((!nb.coverUrl || !nb.synopsis || nb.author === 'Autor desconocido') && enriched < 10) {
+          enriched++
+          try {
+            const q = nb.author && nb.author !== 'Autor desconocido' ? `${nb.title} ${nb.author}` : nb.title
+            const online = await searchBookOnline(q)
+            if (online) {
+              if ((!nb.author || nb.author === 'Autor desconocido') && online.author) nb.author = online.author
+              if (!nb.coverUrl && online.coverUrl) {
+                nb.coverUrl = await downloadAndSaveCover(nb.id, online.coverUrl)
+              }
+              if (!nb.pages && online.pages) nb.pages = online.pages
+              if (!nb.year && online.year) nb.year = online.year
+              if (!nb.genre && online.genre) nb.genre = online.genre
+              if (!nb.synopsis && online.synopsis) nb.synopsis = online.synopsis
+            }
+          } catch (e) {}
+        }
+      }
+
       setStoredBooks(current)
-      return { success: true, count: added, message: `Se han importado ${added} lecturas nuevas con éxito a Mis lecturas.` }
+      return {
+        success: true,
+        count: added,
+        message: `¡Se han importado ${added} lecturas nuevas desde el archivo .${ext.toUpperCase()} con éxito!`
+      }
     } catch (e: any) {
-      return { success: false, message: `Error al importar: ${e.message}` }
+      return { success: false, message: `Error al importar el archivo: ${e.message}` }
     }
+  }
+
+  ipcMain.handle('import-readings', async (_, formatFilter?: 'excel' | 'csv' | 'md' | 'json' | 'all') => {
+    return handleImportReadings(formatFilter)
+  })
+
+  ipcMain.handle('import-readings-json', async () => {
+    return handleImportReadings('json')
   })
 
   // Choose a custom eReader / USB folder manually
@@ -1450,6 +2474,242 @@ app.whenReady().then(() => {
     }
   })
 
+  // -------------------------------------------------------------
+  // Book Recommendations based on 4-5 Star Readings
+  // -------------------------------------------------------------
+  ipcMain.handle('get-recommendations', async (_, seed: number = 0) => {
+    const { net } = require('electron')
+    const books = getStoredBooks()
+    const library = getStoredLibrary()
+
+    const favBooks = books
+      .filter((b: any) => (b.rating || 0) >= 4)
+      .sort((a: any, b: any) => (b.rating || 0) - (a.rating || 0))
+
+    if (favBooks.length === 0) {
+      return { recommendations: [], basedOnCount: 0 }
+    }
+
+    const normalizeStr = (s: string = '') =>
+      s
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]/g, '')
+
+    const existingTitles = new Set<string>()
+    for (const b of books) {
+      if (b.title) existingTitles.add(normalizeStr(b.title))
+    }
+    for (const lb of library) {
+      if (lb.title) existingTitles.add(normalizeStr(lb.title))
+    }
+
+    const isAlreadyKnown = (candidateTitle: string) => {
+      const norm = normalizeStr(candidateTitle)
+      if (!norm || norm.length < 3) return true
+      if (existingTitles.has(norm)) return true
+      for (const ex of existingTitles) {
+        if (ex.length > 5 && (norm.includes(ex) || ex.includes(norm))) return true
+      }
+      return false
+    }
+
+    const recommendations: any[] = []
+    const addedNormTitles = new Set<string>()
+
+    const tryAddCandidate = (cand: {
+      title: string
+      author: string
+      coverUrl?: string
+      year?: string
+      pages?: string
+      genre?: string
+      synopsis?: string
+      reason: string
+      basedOnTitle?: string
+      basedOnRating?: number
+    }) => {
+      if (!cand.title || !cand.author) return false
+      const cleanTitle = cand.title.replace(/\s*\([^)]*(?:edición|edition|colección|collection|pack)[^)]*\)/gi, '').trim()
+      const lowerT = cleanTitle.toLowerCase()
+      if (
+        lowerT.includes('resumen de') ||
+        lowerT.includes('summary of') ||
+        lowerT.includes('study guide') ||
+        lowerT.includes('guía de lectura')
+      ) {
+        return false
+      }
+      const norm = normalizeStr(cleanTitle)
+      if (isAlreadyKnown(cleanTitle) || addedNormTitles.has(norm)) return false
+
+      addedNormTitles.add(norm)
+      recommendations.push({
+        id: `rec_${Date.now()}_${recommendations.length}`,
+        title: cleanTitle,
+        author: cand.author,
+        coverUrl: cand.coverUrl || '',
+        year: cand.year || '',
+        pages: cand.pages || '',
+        genre: cand.genre || '',
+        synopsis: cand.synopsis ? cand.synopsis.replace(/<[^>]+>/g, '').trim() : '',
+        reason: cand.reason,
+        basedOnTitle: cand.basedOnTitle,
+        basedOnRating: cand.basedOnRating
+      })
+      return true
+    }
+
+    // Rotate favorite books using seed so refreshing yields varied results
+    const rotatedFavs = [...favBooks]
+    if (seed > 0 && rotatedFavs.length > 1) {
+      const offset = seed % rotatedFavs.length
+      rotatedFavs.push(...rotatedFavs.splice(0, offset))
+    }
+
+    const selectedFavs = rotatedFavs.slice(0, 4)
+    const startIndex = (seed * 3) % 10
+
+    // 1. Search by favorite authors and genres via Google Books API (Spanish preference) & OpenLibrary
+    for (const fav of selectedFavs) {
+      if (recommendations.length >= 8) break
+
+      const author = fav.author && fav.author !== 'Autor desconocido' ? fav.author.split(',')[0].trim() : ''
+      const genre = fav.genre ? fav.genre.split(',')[0].trim() : ''
+      const starsStr = fav.rating ? `${fav.rating}★` : '4-5★'
+
+      // A) Other acclaimed works by the same author
+      if (author) {
+        try {
+          const gbAuthorUrl = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(`inauthor:"${author}"`)}&langRestrict=es&printType=books&maxResults=8&startIndex=${startIndex}`
+          const res = await net.fetch(gbAuthorUrl)
+          if (res.ok) {
+            const data = await res.json()
+            let addedForAuthor = 0
+            for (const item of data.items || []) {
+              const info = item.volumeInfo || {}
+              if (!info.title || !info.authors?.length) continue
+              const thumb = info.imageLinks?.thumbnail || info.imageLinks?.smallThumbnail || ''
+              const coverUrl = thumb ? thumb.replace(/^http:\/\//i, 'https://') : ''
+              const ok = tryAddCandidate({
+                title: info.title,
+                author: info.authors.join(', '),
+                coverUrl,
+                year: info.publishedDate ? String(info.publishedDate).substring(0, 4) : '',
+                pages: info.pageCount ? String(info.pageCount) : '',
+                genre: info.categories?.[0] || genre || '',
+                synopsis: info.description || '',
+                reason: `Del mismo autor que «${fav.title}» (${starsStr})`,
+                basedOnTitle: fav.title,
+                basedOnRating: fav.rating
+              })
+              if (ok) {
+                addedForAuthor++
+                if (addedForAuthor >= 2) break
+              }
+            }
+          }
+        } catch (e) {}
+
+        // Fallback to OpenLibrary for author if Google Books gave none
+        if (recommendations.filter(r => r.basedOnTitle === fav.title).length === 0) {
+          try {
+            const olAuthorUrl = `https://openlibrary.org/search.json?author=${encodeURIComponent(author)}&limit=8&offset=${startIndex}`
+            const olRes = await net.fetch(olAuthorUrl)
+            if (olRes.ok) {
+              const olData = await olRes.json()
+              let addedOl = 0
+              for (const doc of olData.docs || []) {
+                if (!doc.title || !doc.author_name?.length) continue
+                const coverUrl = doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg` : ''
+                const ok = tryAddCandidate({
+                  title: doc.title,
+                  author: doc.author_name.slice(0, 2).join(', '),
+                  coverUrl,
+                  year: doc.first_publish_year ? String(doc.first_publish_year) : '',
+                  pages: doc.number_of_pages_median ? String(doc.number_of_pages_median) : '',
+                  genre: doc.subject?.[0] || genre || '',
+                  synopsis: '',
+                  reason: `Del mismo autor que «${fav.title}» (${starsStr})`,
+                  basedOnTitle: fav.title,
+                  basedOnRating: fav.rating
+                })
+                if (ok) {
+                  addedOl++
+                  if (addedOl >= 2) break
+                }
+              }
+            }
+          } catch (e) {}
+        }
+      }
+
+      // B) Related books by genre / theme / similar subject
+      const searchTopic = genre || fav.title
+      if (searchTopic) {
+        try {
+          const queryStr = genre
+            ? `subject:"${genre}"`
+            : `"${fav.title}" ${author ? author : ''}`
+          const gbGenreUrl = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(queryStr)}&langRestrict=es&printType=books&maxResults=8&startIndex=${startIndex}`
+          const res = await net.fetch(gbGenreUrl)
+          if (res.ok) {
+            const data = await res.json()
+            let addedForTopic = 0
+            for (const item of data.items || []) {
+              const info = item.volumeInfo || {}
+              if (!info.title || !info.authors?.length) continue
+              const thumb = info.imageLinks?.thumbnail || info.imageLinks?.smallThumbnail || ''
+              const coverUrl = thumb ? thumb.replace(/^http:\/\//i, 'https://') : ''
+              const ok = tryAddCandidate({
+                title: info.title,
+                author: info.authors.join(', '),
+                coverUrl,
+                year: info.publishedDate ? String(info.publishedDate).substring(0, 4) : '',
+                pages: info.pageCount ? String(info.pageCount) : '',
+                genre: info.categories?.[0] || genre || '',
+                synopsis: info.description || '',
+                reason: genre
+                  ? `Afinidad con «${fav.title}» (${starsStr}) • ${genre}`
+                  : `Relacionado con tu lectura «${fav.title}» (${starsStr})`,
+                basedOnTitle: fav.title,
+                basedOnRating: fav.rating
+              })
+              if (ok) {
+                addedForTopic++
+                if (addedForTopic >= 2) break
+              }
+            }
+          }
+        } catch (e) {}
+      }
+    }
+
+    // Enrich any recommendation missing synopsis or cover using searchBookOnline (up to 4 items to stay fast)
+    let enrichedCount = 0
+    for (const rec of recommendations) {
+      if ((!rec.synopsis || !rec.coverUrl) && enrichedCount < 4) {
+        enrichedCount++
+        try {
+          const extra = await searchBookOnline(`${rec.title} ${rec.author}`)
+          if (extra) {
+            if (!rec.coverUrl && extra.coverUrl) rec.coverUrl = extra.coverUrl
+            if (!rec.synopsis && extra.synopsis) rec.synopsis = extra.synopsis
+            if (!rec.pages && extra.pages) rec.pages = extra.pages
+            if (!rec.year && extra.year) rec.year = extra.year
+            if (!rec.genre && extra.genre) rec.genre = extra.genre
+          }
+        } catch (e) {}
+      }
+    }
+
+    return {
+      recommendations: recommendations.slice(0, 8),
+      basedOnCount: favBooks.length
+    }
+  })
+
   createWindow()
 
   app.on('activate', function () {
@@ -1461,6 +2721,12 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+app.on('before-quit', () => {
+  try {
+    flushToDisk()
+  } catch {}
 })
 
 // In this file you can include the rest of your app's specific main process
