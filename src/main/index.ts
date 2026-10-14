@@ -267,7 +267,142 @@ async function downloadAndSaveCover(bookId: string, remoteUrl?: string): Promise
   }
 }
 
+function createSplashScreen(): BrowserWindow {
+  const splash = new BrowserWindow({
+    width: 480,
+    height: 290,
+    transparent: true,
+    frame: false,
+    alwaysOnTop: true,
+    resizable: false,
+    center: true,
+    show: false,
+    hasShadow: true,
+    webPreferences: {
+      sandbox: false
+    }
+  })
+
+  let logoBase64 = ''
+  try {
+    const candidates = [
+      join(__dirname, '../../logo.png'),
+      join(app.getAppPath(), 'logo.png'),
+      join(__dirname, '../../src/renderer/src/assets/logo-light.png'),
+      join(app.getAppPath(), 'src/renderer/src/assets/logo-light.png')
+    ]
+    for (const c of candidates) {
+      if (fs.existsSync(c)) {
+        logoBase64 = `data:image/png;base64,${fs.readFileSync(c).toString('base64')}`
+        break
+      }
+    }
+  } catch {}
+
+  const splashHtml = `
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+      <meta charset="utf-8">
+      <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+          background: transparent;
+          font-family: -apple-system, BlinkMacSystemFont, "DM Sans", "Segoe UI", Roboto, sans-serif;
+          user-select: none;
+          -webkit-app-region: drag;
+          height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 12px;
+        }
+        .card {
+          width: 100%;
+          height: 100%;
+          background: #EEE0D9;
+          border: 1.5px solid #d9c8bf;
+          border-radius: 26px;
+          box-shadow: 0 20px 45px rgba(42, 28, 20, 0.28);
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: space-between;
+          padding: 34px 28px 24px;
+          text-align: center;
+          position: relative;
+          overflow: hidden;
+        }
+        .logo-wrap {
+          flex: 1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 100%;
+        }
+        .logo {
+          max-width: 320px;
+          max-height: 84px;
+          object-fit: contain;
+          filter: drop-shadow(0 2px 4px rgba(42, 28, 20, 0.08));
+        }
+        .progress-bar-container {
+          width: 160px;
+          height: 3px;
+          background: rgba(40, 86, 102, 0.15);
+          border-radius: 99px;
+          overflow: hidden;
+          margin-bottom: 12px;
+        }
+        .progress-bar {
+          width: 100%;
+          height: 100%;
+          background: linear-gradient(90deg, #285666, #C3DDE6, #285666);
+          background-size: 200% 100%;
+          animation: shimmer 1.4s infinite ease-in-out;
+        }
+        @keyframes shimmer {
+          0% { transform: translateX(-100%); }
+          100% { transform: translateX(100%); }
+        }
+        .version-text {
+          font-size: 11.5px;
+          font-weight: 500;
+          color: #6d5a50;
+          letter-spacing: 0.02em;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <div class="logo-wrap">
+          ${logoBase64 ? `<img class="logo" src="${logoBase64}" alt="Bibliosfera" />` : '<h1 style="font-size:32px;font-weight:bold;color:#285666;">Bibliosfera</h1>'}
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:center;">
+          <div class="progress-bar-container">
+            <div class="progress-bar"></div>
+          </div>
+          <p class="version-text">v1.1. Desarrollada por Óliver Rivero © 2026</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `
+
+  splash.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(splashHtml)}`)
+
+  splash.once('ready-to-show', () => {
+    splash.show()
+  })
+
+  return splash
+}
+
 function createWindow(): void {
+  // 1. Show splash screen immediately
+  const splash = createSplashScreen()
+  const splashStartTime = Date.now()
+
   // Compute generous window size for large and high-res screens
   const primaryDisplay = screen.getPrimaryDisplay()
   const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize
@@ -282,7 +417,7 @@ function createWindow(): void {
     minWidth: 1050,
     minHeight: 700,
     center: true,
-    show: true,
+    show: false,
     autoHideMenuBar: true,
     icon,
     webPreferences: {
@@ -291,9 +426,28 @@ function createWindow(): void {
     }
   })
 
-  mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
-    mainWindow.focus()
+  let mainWindowShown = false
+  const showMainWindow = () => {
+    if (mainWindowShown || mainWindow.isDestroyed()) return
+    mainWindowShown = true
+
+    const elapsed = Date.now() - splashStartTime
+    const minSplashDuration = 1800 // Smooth natural display of 1.8s
+    const remainingTime = Math.max(0, minSplashDuration - elapsed)
+
+    setTimeout(() => {
+      if (!splash.isDestroyed()) {
+        splash.close()
+      }
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.show()
+        mainWindow.focus()
+      }
+    }, remainingTime)
+  }
+
+  mainWindow.once('ready-to-show', () => {
+    showMainWindow()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
