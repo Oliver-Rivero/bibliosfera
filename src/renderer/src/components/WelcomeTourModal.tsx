@@ -32,8 +32,7 @@ interface TourStep {
 
 export default function WelcomeTourModal({
   isOpen,
-  onClose,
-  onNavigateTab
+  onClose
 }: WelcomeTourModalProps) {
   const [currentStep, setCurrentStep] = useState(0)
 

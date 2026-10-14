@@ -8,14 +8,13 @@ import {
   Square, 
   Check, 
   Loader2, 
-  ShieldCheck,
-  FileText
+  ShieldCheck
 } from 'lucide-react'
 
 interface KindleUploadModalProps {
   isOpen: boolean
   onClose: () => void
-  books: LibraryBook[]
+  books?: LibraryBook[]
   initialSelectedIds?: string[]
   onConfirmUpload: (bookIds: string[], domain: string) => Promise<void>
 }
@@ -23,7 +22,7 @@ interface KindleUploadModalProps {
 export default function KindleUploadModal({
   isOpen,
   onClose,
-  books,
+  books = [],
   initialSelectedIds = [],
   onConfirmUpload
 }: KindleUploadModalProps) {
@@ -49,9 +48,10 @@ export default function KindleUploadModal({
   }, [isOpen, initialSelectedIds])
 
   const filteredBooks = useMemo(() => {
+    const list = books || []
     const q = searchQuery.toLowerCase().trim()
-    if (!q) return books
-    return books.filter(b => 
+    if (!q) return list
+    return list.filter(b => 
       (b.title || '').toLowerCase().includes(q) ||
       (b.author || '').toLowerCase().includes(q) ||
       (b.format || '').toLowerCase().includes(q)

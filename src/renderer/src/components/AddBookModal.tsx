@@ -202,9 +202,9 @@ export default function AddBookModal({ onClose, onAdd, bookToEdit }: AddBookModa
       comment: bookData.comment?.trim() || '',
       coverUrl: bookData.coverUrl?.trim() || '',
       genre: bookData.genre?.trim() || '',
-      year: bookData.year ? (parseInt(String(bookData.year), 10) || undefined) : undefined,
+      year: bookData.year ? String(parseInt(String(bookData.year), 10) || bookData.year) : undefined,
       isbn: bookData.isbn?.trim() || '',
-      pages: bookData.pages ? (parseInt(String(bookData.pages), 10) || undefined) : undefined,
+      pages: bookData.pages ? String(parseInt(String(bookData.pages), 10) || bookData.pages) : undefined,
       readingTime: bookData.readingTime?.trim() || '',
       libraryBookId: bookData.libraryBookId
     }

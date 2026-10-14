@@ -69,7 +69,7 @@ export async function initDatabase(userDataPath: string): Promise<void> {
 
   dbFilePath = join(userDataPath, 'bibliosfera.db')
   const wasmBinary = getWasmBinary()
-  const SQL: SqlJsStatic = await initSqlJs({ wasmBinary })
+  const SQL: SqlJsStatic = await initSqlJs({ wasmBinary: new Uint8Array(wasmBinary).buffer as ArrayBuffer })
 
   if (fs.existsSync(dbFilePath)) {
     try {
@@ -269,6 +269,12 @@ export function getStoredBooks(): Book[] {
   }
 }
 
+function toNullableNumber(val: any): number | null {
+  if (val === undefined || val === null || val === '') return null
+  const num = Number(val)
+  return isNaN(num) ? null : num
+}
+
 export function setStoredBooks(books: Book[]): void {
   if (!db) return
   try {
@@ -289,10 +295,10 @@ export function setStoredBooks(books: Book[]): void {
         b.id || `book_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         b.title || 'Sin título',
         b.author || 'Autor desconocido',
-        b.year !== undefined && b.year !== null && b.year !== '' && !isNaN(Number(b.year)) ? Number(b.year) : null,
+        toNullableNumber(b.year),
         b.genre || null,
-        b.pages !== undefined && b.pages !== null && b.pages !== '' && !isNaN(Number(b.pages)) ? Number(b.pages) : null,
-        b.rating !== undefined && b.rating !== null && b.rating !== '' && !isNaN(Number(b.rating)) ? Number(b.rating) : null,
+        toNullableNumber(b.pages),
+        toNullableNumber(b.rating),
         b.readingTime || null,
         b.dateRead || null,
         b.comment || null,
@@ -333,10 +339,10 @@ export function addStoredBook(book: Book): Book[] {
         book.id,
         book.title || 'Sin título',
         book.author || 'Autor desconocido',
-        book.year !== undefined && book.year !== null && book.year !== '' && !isNaN(Number(book.year)) ? Number(book.year) : null,
+        toNullableNumber(book.year),
         book.genre || null,
-        book.pages !== undefined && book.pages !== null && book.pages !== '' && !isNaN(Number(book.pages)) ? Number(book.pages) : null,
-        book.rating !== undefined && book.rating !== null && book.rating !== '' && !isNaN(Number(book.rating)) ? Number(book.rating) : null,
+        toNullableNumber(book.pages),
+        toNullableNumber(book.rating),
         book.readingTime || null,
         book.dateRead || null,
         book.comment || null,
@@ -377,10 +383,10 @@ export function updateStoredBook(book: Book): Book[] {
       [
         book.title || 'Sin título',
         book.author || 'Autor desconocido',
-        book.year !== undefined && book.year !== null && book.year !== '' && !isNaN(Number(book.year)) ? Number(book.year) : null,
+        toNullableNumber(book.year),
         book.genre || null,
-        book.pages !== undefined && book.pages !== null && book.pages !== '' && !isNaN(Number(book.pages)) ? Number(book.pages) : null,
-        book.rating !== undefined && book.rating !== null && book.rating !== '' && !isNaN(Number(book.rating)) ? Number(book.rating) : null,
+        toNullableNumber(book.pages),
+        toNullableNumber(book.rating),
         book.readingTime || null,
         book.dateRead || null,
         book.comment || null,

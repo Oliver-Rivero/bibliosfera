@@ -818,31 +818,7 @@ app.whenReady().then(async () => {
   // -------------------------------------------------------------
   ipcMain.handle('get-library-books', async () => {
     const library = getStoredLibrary()
-    // Auto-enrich any existing book that is missing author or cover
-    let modified = false
-    for (const b of library) {
-      if ((!b.author || b.author === 'Autor desconocido' || !b.coverUrl) && b.title) {
-        try {
-          const online = await searchBookOnline(b.title)
-          if (online && (online.author || online.coverUrl)) {
-            if (online.title && online.title.length > 1) b.title = online.title
-            if (online.author && (!b.author || b.author === 'Autor desconocido')) b.author = online.author
-            if (online.coverUrl && !b.coverUrl) {
-              b.coverUrl = await downloadAndSaveCover(`lib_${b.id}`, online.coverUrl)
-            }
-            if (online.pages && !b.pages) b.pages = online.pages
-            if (online.year && !b.year) b.year = online.year
-            if (online.genre && !b.genre) b.genre = online.genre
-            if (online.synopsis && !b.synopsis) b.synopsis = online.synopsis
-            modified = true
-          }
-        } catch (e) {}
-      }
-    }
-    if (modified) {
-      setStoredLibrary(library)
-    }
-    return library
+    return Array.isArray(library) ? library : []
   })
 
   async function importAndAnalyzeBookFile(sourcePath: string, existingLibrary: any[]): Promise<any | null> {
@@ -1047,6 +1023,7 @@ app.whenReady().then(async () => {
 
   // Library Storage Folder Management
   ipcMain.handle('get-library-storage-dir', () => {
+    const cfg = getAppConfig()
     const currentPath = getLibraryFilesDir()
     const defaultPath = getDefaultLibraryFilesDir()
     const rawTheme = cfg.themeName || 'clasico'

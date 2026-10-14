@@ -39,11 +39,6 @@ export default function App() {
   const [readingsViewMode, setReadingsViewMode] = useState<'list' | 'shelf' | 'spines'>('list')
   const [readingsSortBy, setReadingsSortBy] = useState<'date-desc' | 'date-asc' | 'author-asc' | 'title-asc'>('date-desc')
   const [coverPalettes, setCoverPalettes] = useState<Record<string, SpinePalette>>({})
-  const [hoveredReadingsSpine, setHoveredReadingsSpine] = useState<{
-    book: Book
-    x: number
-    y: number
-  } | null>(null)
   const [editingBook, setEditingBook] = useState<Book | undefined>(undefined)
   const [detailBook, setDetailBook] = useState<Book | undefined>(undefined)
   const [showSettingsModal, setShowSettingsModal] = useState(false)

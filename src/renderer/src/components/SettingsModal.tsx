@@ -23,8 +23,7 @@ import {
   FileDown,
   Loader2,
   ExternalLink,
-  Wifi,
-  Tablet
+  Wifi
 } from 'lucide-react'
 
 interface SettingsModalProps {

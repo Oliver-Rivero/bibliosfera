@@ -29,8 +29,7 @@ import {
   Square,
   Zap,
   ArrowUpDown,
-  Wifi,
-  ExternalLink
+  Wifi
 } from 'lucide-react'
 import SettingsModal from './SettingsModal'
 import KindleUploadModal from './KindleUploadModal'
@@ -43,7 +42,7 @@ interface LibraryViewProps {
   onBooksCountChange?: (count: number) => void
 }
 
-export default function LibraryView({ onMarkAsRead, readBookIds, onBooksCountChange }: LibraryViewProps) {
+export default function LibraryView({ onMarkAsRead, readBookIds = [], onBooksCountChange }: LibraryViewProps) {
   const [books, setBooks] = useState<LibraryBook[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'read'>('all')
@@ -114,6 +113,7 @@ export default function LibraryView({ onMarkAsRead, readBookIds, onBooksCountCha
   const [dragOverTargetId, setDragOverTargetId] = useState<string | null>(null)
   const [sortBy, setSortBy] = useState<'custom' | 'title-asc' | 'title-desc' | 'author-asc'>('custom')
   const [isSelectMode, setIsSelectMode] = useState(false)
+  const [selectedBookIds, setSelectedBookIds] = useState<string[]>([])
   const [isExportOpen, setIsExportOpen] = useState(false)
   const [isKindleModalOpen, setIsKindleModalOpen] = useState(false)
   const [kindleInitialBookIds, setKindleInitialBookIds] = useState<string[]>([])
@@ -446,22 +446,23 @@ export default function LibraryView({ onMarkAsRead, readBookIds, onBooksCountCha
     return Math.round(bytes / 1024) + ' KB'
   }
 
-  const totalBytes = books.reduce((acc, b) => acc + (b.fileSize || 0), 0)
-  const pendingCount = books.filter(b => b.status !== 'read' && !readBookIds.includes(b.id)).length
-  const readCount = books.filter(b => b.status === 'read' || readBookIds.includes(b.id)).length
+  const totalBytes = (books || []).reduce((acc, b) => acc + (b.fileSize || 0), 0)
+  const pendingCount = (books || []).filter(b => b.status !== 'read' && !(readBookIds || []).includes(b.id)).length
+  const readCount = (books || []).filter(b => b.status === 'read' || (readBookIds || []).includes(b.id)).length
 
   // Filtering
-  const filtered = books.filter(b => {
-    const titleMatch = b.title.toLowerCase().includes(searchQuery.toLowerCase())
-    const authorMatch = b.author?.toLowerCase().includes(searchQuery.toLowerCase())
-    const matchesSearch = titleMatch || authorMatch
+  const filtered = (books || []).filter(b => {
+    const q = (searchQuery || '').toLowerCase().trim()
+    const titleMatch = (b.title || '').toLowerCase().includes(q)
+    const authorMatch = (b.author || '').toLowerCase().includes(q)
+    const matchesSearch = !q || titleMatch || authorMatch
 
-    const isMarkedRead = b.status === 'read' || readBookIds.includes(b.id)
+    const isMarkedRead = b.status === 'read' || (readBookIds || []).includes(b.id)
     const matchesStatus = statusFilter === 'all' ? true :
                           statusFilter === 'read' ? isMarkedRead :
                           statusFilter === 'pending' ? !isMarkedRead : true
 
-    const matchesFormat = formatFilter === 'all' ? true : b.format.toLowerCase() === formatFilter.toLowerCase()
+    const matchesFormat = formatFilter === 'all' ? true : ((b.format || '').toLowerCase() === formatFilter.toLowerCase())
 
     return matchesSearch && matchesStatus && matchesFormat
   }).sort((a, b) => {
