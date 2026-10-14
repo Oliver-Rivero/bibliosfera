@@ -1559,7 +1559,7 @@ app.whenReady().then(async () => {
   })
 
   // -------------------------------------------------------------
-  // Send to Kindle Web (Default browser + Finder selection companion)
+  // Send to Kindle Web (Default browser + Finder / Explorer companion)
   // -------------------------------------------------------------
   ipcMain.handle('send-to-kindle-web', async (_, bookIds: string | string[], options?: { domain?: string }) => {
     const ids = Array.isArray(bookIds) ? bookIds : [bookIds]
@@ -1574,44 +1574,119 @@ app.whenReady().then(async () => {
     }
 
     const filesDir = getLibraryFilesDir()
-    const existingFiles: { title: string; path: string; format: string }[] = []
 
+    // 1. Prepare clean staging folder in temp directory
+    const stagingDir = join(app.getPath('temp'), 'Bibliosfera - Enviar a Kindle')
+    try {
+      if (!fs.existsSync(stagingDir)) {
+        fs.mkdirSync(stagingDir, { recursive: true })
+      } else {
+        // Remove previous temporary Kindle files
+        const existing = fs.readdirSync(stagingDir)
+        for (const f of existing) {
+          try { fs.unlinkSync(join(stagingDir, f)) } catch {}
+        }
+      }
+    } catch {}
+
+    const sanitizeFilename = (name: string) => {
+      return (name || '')
+        .replace(/[/\\?%*:|"<>]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+    }
+
+    const cleanFiles: { title: string; path: string; fileName: string; fileSize?: number }[] = []
     for (const b of targetBooks) {
-      const p = join(filesDir, b.fileName)
-      if (fs.existsSync(p)) {
-        existingFiles.push({ title: b.title, path: p, format: b.format })
+      const origPath = join(filesDir, b.fileName)
+      if (fs.existsSync(origPath)) {
+        const cleanTitle = sanitizeFilename(b.title || 'Libro')
+        const cleanAuthor = sanitizeFilename(b.author && b.author !== 'Autor desconocido' ? b.author : '')
+        const ext = (b.format || 'epub').toLowerCase().replace(/^\./, '')
+        const cleanFileName = cleanAuthor ? `${cleanTitle} - ${cleanAuthor}.${ext}` : `${cleanTitle}.${ext}`
+        const cleanPath = join(stagingDir, cleanFileName)
+        try {
+          fs.copyFileSync(origPath, cleanPath)
+          cleanFiles.push({ title: b.title, path: cleanPath, fileName: cleanFileName, fileSize: b.fileSize })
+        } catch {
+          cleanFiles.push({ title: b.title, path: origPath, fileName: b.fileName, fileSize: b.fileSize })
+        }
       }
     }
 
-    if (existingFiles.length === 0) {
+    if (cleanFiles.length === 0) {
       return { success: false, message: 'Los archivos físicos de los libros no existen en el disco.' }
     }
 
     const domain = options?.domain || 'amazon.es'
     const kindleUrl = `https://www.${domain}/sendtokindle`
 
-    // 1. Reveal selected file(s) in Finder (macOS) or Explorer (Windows)
-    if (process.platform === 'darwin') {
-      try {
-        const { execSync } = require('child_process')
-        const posixFiles = existingFiles.map(f => `POSIX file "${f.path.replace(/"/g, '\\"')}"`).join(', ')
-        execSync(`osascript -e 'tell application "Finder" to reveal {${posixFiles}}' -e 'tell application "Finder" to activate'`)
-      } catch {
-        shell.showItemInFolder(existingFiles[0].path)
-      }
-    } else {
-      shell.showItemInFolder(existingFiles[0].path)
-    }
-
-    // 2. Open default browser (Safari, Chrome, Arc...) where the user's session is active
+    // 2. Open default browser FIRST so it loads Amazon Send to Kindle
     try {
       await shell.openExternal(kindleUrl)
     } catch {}
 
-    const countLabel = existingFiles.length === 1 ? `"${existingFiles[0].title}"` : `${existingFiles.length} libros`
+    // 3. Open Finder (macOS) or File Explorer (Windows) AFTER a short delay so it stays ON TOP
+    setTimeout(() => {
+      try {
+        if (process.platform === 'darwin') {
+          // On macOS: position Finder on the right half of the screen
+          const primary = screen.getPrimaryDisplay()
+          const { x, y, width, height } = primary.workArea
+          const finderWidth = Math.min(460, Math.max(380, Math.round(width * 0.32)))
+          const finderHeight = Math.min(580, Math.max(380, height - 140))
+          const finderLeft = x + width - finderWidth - 25
+          const finderTop = y + 75
+          const finderRight = finderLeft + finderWidth
+          const finderBottom = finderTop + finderHeight
+
+          const posixFiles = cleanFiles.map(f => `POSIX file "${f.path.replace(/"/g, '\\"')}"`).join(', ')
+          const script = `
+            tell application "Finder"
+              activate
+              set targetFolder to POSIX file "${stagingDir.replace(/"/g, '\\"')}" as alias
+              set fWin to open targetFolder
+              set bounds of fWin to {${finderLeft}, ${finderTop}, ${finderRight}, ${finderBottom}}
+              set current view of fWin to list view
+              select every item of targetFolder
+            end tell
+          `
+          const { exec } = require('child_process')
+          exec(`osascript -e '${script.replace(/'/g, "'\\''")}'`, (err: any) => {
+            if (err) {
+              if (cleanFiles.length === 1) {
+                shell.showItemInFolder(cleanFiles[0].path)
+              } else {
+                shell.openPath(stagingDir)
+              }
+            }
+            try {
+              exec(`osascript -e 'set the clipboard to {${posixFiles}}'`)
+            } catch {}
+          })
+        } else if (process.platform === 'win32') {
+          // Windows: Open File Explorer with the clean files highlighted
+          const { exec } = require('child_process')
+          if (cleanFiles.length === 1) {
+            exec(`explorer.exe /select,"${cleanFiles[0].path}"`)
+          } else {
+            exec(`explorer.exe "${stagingDir}"`)
+          }
+        } else {
+          shell.openPath(stagingDir)
+        }
+      } catch (err) {
+        shell.openPath(stagingDir)
+      }
+    }, 450)
+
+    const countLabel = cleanFiles.length === 1 ? `"${cleanFiles[0].title}"` : `${cleanFiles.length} libros`
     return {
       success: true,
-      message: `Send to Kindle abierto en tu navegador. Tienes ${countLabel} en Finder listos para arrastrar.`
+      count: cleanFiles.length,
+      stagingDir,
+      cleanFiles: cleanFiles.map(c => ({ title: c.title, fileName: c.fileName, fileSize: c.fileSize })),
+      message: `Send to Kindle abierto en tu navegador. Tienes ${countLabel} con títulos limpios en Finder listos para arrastrar.`
     }
   })
 
@@ -1620,6 +1695,20 @@ app.whenReady().then(async () => {
     const kindleUrl = `https://www.${targetDomain}/sendtokindle`
     shell.openExternal(kindleUrl)
     return { success: true }
+  })
+
+  ipcMain.handle('open-kindle-staging-dir', async () => {
+    const stagingDir = join(app.getPath('temp'), 'Bibliosfera - Enviar a Kindle')
+    if (fs.existsSync(stagingDir)) {
+      if (process.platform === 'win32') {
+        const { exec } = require('child_process')
+        exec(`explorer.exe "${stagingDir}"`)
+      } else {
+        shell.openPath(stagingDir)
+      }
+      return { success: true }
+    }
+    return { success: false }
   })
 
   // -------------------------------------------------------------

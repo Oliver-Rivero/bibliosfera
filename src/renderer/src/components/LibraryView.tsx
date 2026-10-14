@@ -202,18 +202,21 @@ export default function LibraryView({ onMarkAsRead, readBookIds = [], onBooksCou
     setIsKindleModalOpen(true)
   }
 
-  const handleConfirmKindleUpload = async (bookIds: string[], domain: string) => {
+  const handleConfirmKindleUpload = async (bookIds: string[], domain: string): Promise<boolean> => {
     const label = bookIds.length === 1 ? '1 libro' : `${bookIds.length} libros`
-    showToast(`Abriendo ventana Send to Kindle (${domain}) para ${label}...`)
+    showToast(`Preparando ${label} y abriendo navegador...`)
     try {
       const res = await window.api.sendToKindleWeb(bookIds, { domain })
       showToast(res.message)
       if (res.success) {
         setSelectedBookIds([])
         setIsSelectMode(false)
+        return true
       }
+      return false
     } catch (e: any) {
       showToast(`Error al abrir Send to Kindle: ${e?.message || 'Error desconocido'}`)
+      return false
     }
   }
 

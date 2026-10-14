@@ -22,6 +22,7 @@ const api = {
   getConnectedDevice: () => ipcRenderer.invoke('get-connected-device'),
   sendToKindleWeb: (bookIds: string | string[], options?: { domain?: string }) => ipcRenderer.invoke('send-to-kindle-web', bookIds, options),
   openSendToKindleWeb: (domain?: string) => ipcRenderer.invoke('open-send-to-kindle-web', domain),
+  openKindleStagingDir: () => ipcRenderer.invoke('open-kindle-staging-dir'),
   shareByEmail: (id: string, options?: { toEmail?: string }) => ipcRenderer.invoke('share-by-email', id, options),
   enrichLibraryBook: (id: string, query?: string) => ipcRenderer.invoke('enrich-library-book', id, query),
   reorderLibraryBooks: (orderedIds: string[]) => ipcRenderer.invoke('reorder-library-books', orderedIds),
