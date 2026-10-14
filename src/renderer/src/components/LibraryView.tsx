@@ -33,6 +33,7 @@ import {
   ExternalLink
 } from 'lucide-react'
 import SettingsModal from './SettingsModal'
+import KindleUploadModal from './KindleUploadModal'
 
 import { SpinePalette, SPINE_PALETTES, extractCoverPalette } from '../utils/palette'
 
@@ -113,8 +114,9 @@ export default function LibraryView({ onMarkAsRead, readBookIds, onBooksCountCha
   const [dragOverTargetId, setDragOverTargetId] = useState<string | null>(null)
   const [sortBy, setSortBy] = useState<'custom' | 'title-asc' | 'title-desc' | 'author-asc'>('custom')
   const [isSelectMode, setIsSelectMode] = useState(false)
-  const [selectedBookIds, setSelectedBookIds] = useState<string[]>([])
   const [isExportOpen, setIsExportOpen] = useState(false)
+  const [isKindleModalOpen, setIsKindleModalOpen] = useState(false)
+  const [kindleInitialBookIds, setKindleInitialBookIds] = useState<string[]>([])
   const [hoveredSpine, setHoveredSpine] = useState<{
     book: LibraryBook
     pagesCount: number
@@ -189,15 +191,34 @@ export default function LibraryView({ onMarkAsRead, readBookIds, onBooksCountCha
     showToast(res.message)
   }
 
-  const handleSendToKindleWeb = async (book: LibraryBook) => {
-    const domain = localStorage.getItem('bibliosfera_kindle_domain') || 'amazon.es'
-    showToast(`Abriendo Send to Kindle (${domain}) para "${book.title}"...`)
+  const openKindleModal = (ids?: string[]) => {
+    if (ids && ids.length > 0) {
+      setKindleInitialBookIds(ids)
+    } else if (selectedBookIds.length > 0) {
+      setKindleInitialBookIds(selectedBookIds)
+    } else {
+      setKindleInitialBookIds([])
+    }
+    setIsKindleModalOpen(true)
+  }
+
+  const handleConfirmKindleUpload = async (bookIds: string[], domain: string) => {
+    const label = bookIds.length === 1 ? '1 libro' : `${bookIds.length} libros`
+    showToast(`Abriendo ventana Send to Kindle (${domain}) para ${label}...`)
     try {
-      const res = await window.api.sendToKindleWeb(book.id, { domain })
+      const res = await window.api.sendToKindleWeb(bookIds, { domain })
       showToast(res.message)
+      if (res.success) {
+        setSelectedBookIds([])
+        setIsSelectMode(false)
+      }
     } catch (e: any) {
       showToast(`Error al abrir Send to Kindle: ${e?.message || 'Error desconocido'}`)
     }
+  }
+
+  const handleSendToKindleWeb = (book: LibraryBook) => {
+    openKindleModal([book.id])
   }
 
   const handleShareByEmail = async (book: LibraryBook) => {
@@ -237,18 +258,8 @@ export default function LibraryView({ onMarkAsRead, readBookIds, onBooksCountCha
     }
   }
 
-  const handleTransferSelectionToKindleWeb = async () => {
-    if (selectedBookIds.length === 0) return
-    const domain = localStorage.getItem('bibliosfera_kindle_domain') || 'amazon.es'
-    showToast(`Abriendo Send to Kindle (${domain}) para ${selectedBookIds.length} libros...`)
-    try {
-      const res = await window.api.sendToKindleWeb(selectedBookIds, { domain })
-      showToast(res.message)
-      setSelectedBookIds([])
-      setIsSelectMode(false)
-    } catch (e: any) {
-      showToast(`Error al abrir Send to Kindle: ${e?.message || 'Error desconocido'}`)
-    }
+  const handleTransferSelectionToKindleWeb = () => {
+    openKindleModal(selectedBookIds)
   }
 
   const handleDeleteSelection = async () => {
@@ -728,12 +739,9 @@ export default function LibraryView({ onMarkAsRead, readBookIds, onBooksCountCha
           </div>
           <div className="flex items-center gap-3 flex-wrap">
             <button
-              onClick={() => {
-                const domain = localStorage.getItem('bibliosfera_kindle_domain') || 'amazon.es'
-                window.api.openSendToKindleWeb(domain)
-              }}
+              onClick={() => openKindleModal()}
               className="text-amber-700 dark:text-amber-400 hover:underline font-semibold cursor-pointer text-[12px] flex items-center gap-1.5"
-              title="Abrir Send to Kindle Web para enviar libros sin cables"
+              title="Seleccionar y subir libros a Kindle sin cables"
             >
               <Wifi className="w-3.5 h-3.5" />
               <span>¿Tienes Kindle? Enviar sin cables</span>
@@ -2062,6 +2070,15 @@ export default function LibraryView({ onMarkAsRead, readBookIds, onBooksCountCha
         totalReadingsCount={readBookIds.length}
         totalLibraryCount={books.length}
         onUploadBook={handleUpload}
+      />
+
+      {/* Kindle Wireless Selection Modal */}
+      <KindleUploadModal
+        isOpen={isKindleModalOpen}
+        onClose={() => setIsKindleModalOpen(false)}
+        books={books}
+        initialSelectedIds={kindleInitialBookIds}
+        onConfirmUpload={handleConfirmKindleUpload}
       />
 
     </div>
