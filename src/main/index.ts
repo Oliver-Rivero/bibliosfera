@@ -382,7 +382,7 @@ function createSplashScreen(): BrowserWindow {
           <div class="progress-bar-container">
             <div class="progress-bar"></div>
           </div>
-          <p class="version-text">v1.1. Desarrollada por Óliver Rivero © 2026</p>
+          <p class="version-text">v1.0. Desarrollada por Óliver Rivero © 2026</p>
         </div>
       </div>
     </body>

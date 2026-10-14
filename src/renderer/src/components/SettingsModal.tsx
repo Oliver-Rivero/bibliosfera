@@ -1172,7 +1172,7 @@ export default function SettingsModal({
         <div className="px-6 py-3.5 border-t border-[var(--color-line)] bg-[var(--color-bg)]/40 flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-3">
             <span className="text-[12px] text-[var(--color-muted)]">
-              Bibliosfera • v1.1 desarrollado por Óliver Rivero ©
+              Bibliosfera • v1.0 • Desarrollada por Óliver Rivero © 2026
             </span>
             {onOpenTour && (
               <button
