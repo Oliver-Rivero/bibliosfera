@@ -577,9 +577,6 @@ export default function LibraryView({ onMarkAsRead, readBookIds, onBooksCountCha
               {books.length} {books.length === 1 ? 'libro' : 'libros'}
             </span>
           </div>
-          <p className="text-[14px] text-[var(--color-muted)] max-w-[56ch] leading-relaxed">
-            Tu biblioteca virtual donde guardar todos tus eBooks. Disfruta de sus portadas en 3D, pásalos a tu eReader o trasládalos a tus lecturas terminadas con un toque.
-          </p>
 
           {/* Quick Stats Pill Bar */}
           <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-4 text-[12.5px] font-medium text-[var(--color-muted)]">
