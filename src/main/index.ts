@@ -895,12 +895,13 @@ app.whenReady().then(async () => {
   ipcMain.handle('get-library-storage-dir', () => {
     const currentPath = getLibraryFilesDir()
     const defaultPath = getDefaultLibraryFilesDir()
-    const cfg = getAppConfig()
+    const rawTheme = cfg.themeName || 'clasico'
+    const normalizedTheme = rawTheme === 'elegante' ? 'clasico' : rawTheme === 'exlibris' ? 'pergamino' : rawTheme
     return {
       path: currentPath,
       defaultPath,
       isCustom: Boolean(cfg.libraryStorageDir && cfg.libraryStorageDir !== defaultPath),
-      themeName: cfg.themeName || 'elegante'
+      themeName: normalizedTheme
     }
   })
 
@@ -1424,6 +1425,80 @@ app.whenReady().then(async () => {
       success: true,
       message: `¡Borrador de correo abierto con "${book.title}.${book.format}" adjunto directamente!\n(También se ha copiado al portapapeles).`
     }
+  })
+
+  // -------------------------------------------------------------
+  // Send to Kindle Web (https://www.amazon.es/sendtokindle)
+  // -------------------------------------------------------------
+  ipcMain.handle('send-to-kindle-web', async (_, bookIds: string | string[], options?: { domain?: string }) => {
+    const ids = Array.isArray(bookIds) ? bookIds : [bookIds]
+    if (ids.length === 0) {
+      return { success: false, message: 'No se ha seleccionado ningún libro.' }
+    }
+
+    const library = getStoredLibrary()
+    const targetBooks = library.filter(b => ids.includes(b.id) && b.fileName)
+    if (targetBooks.length === 0) {
+      return { success: false, message: 'No se encontraron los libros seleccionados en el registro.' }
+    }
+
+    const filesDir = getLibraryFilesDir()
+    const existingFiles: { title: string; path: string; format: string }[] = []
+
+    for (const b of targetBooks) {
+      const p = join(filesDir, b.fileName)
+      if (fs.existsSync(p)) {
+        existingFiles.push({ title: b.title, path: p, format: b.format })
+      }
+    }
+
+    if (existingFiles.length === 0) {
+      return { success: false, message: 'Los archivos físicos de los libros no existen en el disco.' }
+    }
+
+    const domain = options?.domain || 'amazon.es'
+    const kindleUrl = `https://www.${domain}/sendtokindle`
+
+    try {
+      // Open Send to Kindle web in the user's browser
+      shell.openExternal(kindleUrl)
+
+      const fmName = process.platform === 'win32' ? 'el Explorador de archivos' : 'el Finder'
+
+      if (existingFiles.length === 1) {
+        const singleFile = existingFiles[0]
+        shell.showItemInFolder(singleFile.path)
+
+        // On macOS: copy to clipboard as file object so user can paste or drag easily
+        if (process.platform === 'darwin') {
+          try {
+            const { execSync } = require('child_process')
+            execSync(`osascript -e 'set the clipboard to POSIX file "${singleFile.path.replace(/"/g, '\\"')}"'`)
+          } catch {}
+        }
+
+        return {
+          success: true,
+          message: `¡Web Send to Kindle abierta!\nHemos seleccionado "${singleFile.title}" en ${fmName}. Arrástralo a la web para subirlo a tu Kindle.`
+        }
+      } else {
+        // Multiple books: reveal folder
+        shell.openPath(filesDir)
+        return {
+          success: true,
+          message: `¡Web Send to Kindle abierta!\nHemos abierto tu carpeta en ${fmName} con tus ${existingFiles.length} libros listos para arrastrar a la web.`
+        }
+      }
+    } catch (err: any) {
+      return { success: false, message: `Error al abrir Send to Kindle: ${err.message}` }
+    }
+  })
+
+  ipcMain.handle('open-send-to-kindle-web', async (_, domain?: string) => {
+    const targetDomain = domain || 'amazon.es'
+    const kindleUrl = `https://www.${targetDomain}/sendtokindle`
+    shell.openExternal(kindleUrl)
+    return { success: true }
   })
 
   // -------------------------------------------------------------

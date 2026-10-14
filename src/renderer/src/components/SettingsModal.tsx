@@ -21,7 +21,10 @@ import {
   Palette,
   Sparkles,
   FileDown,
-  Loader2
+  Loader2,
+  ExternalLink,
+  Wifi,
+  Tablet
 } from 'lucide-react'
 
 interface SettingsModalProps {
@@ -69,7 +72,13 @@ export default function SettingsModal({
 
   // Theme state
   const [selectedTheme, setSelectedTheme] = useState<string>(() => {
-    return localStorage.getItem('bibliosfera_app_theme') || 'elegante'
+    const t = localStorage.getItem('bibliosfera_app_theme') || 'clasico'
+    return t === 'elegante' ? 'clasico' : t === 'exlibris' ? 'pergamino' : t
+  })
+
+  // Kindle Web store domain state
+  const [kindleDomain, setKindleDomain] = useState<string>(() => {
+    return localStorage.getItem('bibliosfera_kindle_domain') || 'amazon.es'
   })
 
   // eReader state
@@ -276,9 +285,11 @@ export default function SettingsModal({
       // ignore
     }
     const labels: Record<string, string> = {
-      elegante: 'Elegante',
+      clasico: 'Clásico',
+      elegante: 'Clásico',
       cactusito: 'Cactusito',
-      exlibris: 'Ex Libris'
+      pergamino: 'Pergamino',
+      exlibris: 'Pergamino'
     }
     setStatusMsg({
       type: 'success',
@@ -824,11 +835,11 @@ export default function SettingsModal({
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* Tema 1: Elegante */}
+                {/* Tema 1: Clásico */}
                 <div
-                  onClick={() => handleSelectTheme('elegante')}
+                  onClick={() => handleSelectTheme('clasico')}
                   className={`p-4 rounded-2xl border-2 transition-all flex flex-col justify-between gap-4 cursor-pointer ${
-                    selectedTheme === 'elegante'
+                    selectedTheme === 'clasico' || selectedTheme === 'elegante'
                       ? 'border-[var(--color-accent)] bg-[var(--color-bg)]/60 shadow-sm'
                       : 'border-[var(--color-line)] bg-[var(--color-bg)]/25 hover:border-[var(--color-accent)]/50'
                   }`}
@@ -843,7 +854,7 @@ export default function SettingsModal({
                           <span className="w-4 h-4 rounded-full bg-[#663A24] border border-white/20" title="#663A24" />
                           <span className="w-4 h-4 rounded-full bg-[#C3DDE6] border border-black/15" title="#C3DDE6" />
                         </div>
-                        {selectedTheme === 'elegante' && (
+                        {(selectedTheme === 'clasico' || selectedTheme === 'elegante') && (
                           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#285666] text-[#EEE0D9]">
                             Activo
                           </span>
@@ -856,13 +867,13 @@ export default function SettingsModal({
 
                     <div>
                       <div className="flex items-center justify-between">
-                        <h4 className="font-bold text-[14.5px] text-[var(--color-ink)]">Elegante</h4>
-                        {selectedTheme === 'elegante' && (
+                        <h4 className="font-bold text-[14.5px] text-[var(--color-ink)]">Clásico</h4>
+                        {(selectedTheme === 'clasico' || selectedTheme === 'elegante') && (
                           <CheckCircle2 className="w-4 h-4 text-[var(--color-accent)]" />
                         )}
                       </div>
                       <p className="text-[12px] text-[var(--color-muted)] mt-1 leading-relaxed">
-                        Estética editorial cálida y serena en tonos papel crema, azul petróleo y cuero, con modo claro y oscuro.
+                        Estética editorial clásica y serena en tonos papel crema, azul petróleo y cuero, con modo claro y oscuro.
                       </p>
                     </div>
                   </div>
@@ -870,15 +881,15 @@ export default function SettingsModal({
                   <button
                     onClick={e => {
                       e.stopPropagation()
-                      handleSelectTheme('elegante')
+                      handleSelectTheme('clasico')
                     }}
                     className={`w-full py-2 px-3 rounded-xl text-[12px] font-bold transition-colors cursor-pointer ${
-                      selectedTheme === 'elegante'
+                      selectedTheme === 'clasico' || selectedTheme === 'elegante'
                         ? 'bg-[var(--color-accent)] text-[var(--color-on-accent)]'
                         : 'border border-[var(--color-line)] bg-[var(--color-surface)] hover:bg-[var(--color-bg)] text-[var(--color-ink)]'
                     }`}
                   >
-                    {selectedTheme === 'elegante' ? 'Tema seleccionado' : 'Aplicar tema «Elegante»'}
+                    {selectedTheme === 'clasico' || selectedTheme === 'elegante' ? 'Tema seleccionado' : 'Aplicar tema «Clásico»'}
                   </button>
                 </div>
 
@@ -945,11 +956,11 @@ export default function SettingsModal({
                   </button>
                 </div>
 
-                {/* Tema 3: Ex Libris (#F4F1EA, #1E3F32, #D5E2DA, #C88A36) */}
+                {/* Tema 3: Pergamino (#F4F1EA, #1E3F32, #D5E2DA, #C88A36) */}
                 <div
-                  onClick={() => handleSelectTheme('exlibris')}
+                  onClick={() => handleSelectTheme('pergamino')}
                   className={`p-4 rounded-2xl border-2 transition-all flex flex-col justify-between gap-4 cursor-pointer ${
-                    selectedTheme === 'exlibris'
+                    selectedTheme === 'pergamino' || selectedTheme === 'exlibris'
                       ? 'border-[var(--color-accent)] bg-[var(--color-bg)]/60 shadow-sm'
                       : 'border-[var(--color-line)] bg-[var(--color-bg)]/25 hover:border-[var(--color-accent)]/50'
                   }`}
@@ -964,7 +975,7 @@ export default function SettingsModal({
                           <span className="w-4 h-4 rounded-full bg-[#D5E2DA] border border-[#1E3F32]/20" title="#D5E2DA" />
                           <span className="w-4 h-4 rounded-full bg-[#C88A36] border border-white/20" title="#C88A36" />
                         </div>
-                        {selectedTheme === 'exlibris' && (
+                        {(selectedTheme === 'pergamino' || selectedTheme === 'exlibris') && (
                           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#1E3F32] text-[#F4F1EA]">
                             Activo
                           </span>
@@ -972,7 +983,7 @@ export default function SettingsModal({
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-[11px] font-bold font-['Bricolage_Grotesque'] text-[#182921]">
-                          Aa • Biblioteca & Latón
+                          Aa • Pergamino & Biblioteca
                         </span>
                         <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-md bg-[#D5E2DA] text-[#1E3F32]">
                           #1E3F32 • #C88A36
@@ -982,13 +993,13 @@ export default function SettingsModal({
 
                     <div>
                       <div className="flex items-center justify-between">
-                        <h4 className="font-bold text-[14.5px] text-[var(--color-ink)]">Ex Libris</h4>
-                        {selectedTheme === 'exlibris' && (
+                        <h4 className="font-bold text-[14.5px] text-[var(--color-ink)]">Pergamino</h4>
+                        {(selectedTheme === 'pergamino' || selectedTheme === 'exlibris') && (
                           <CheckCircle2 className="w-4 h-4 text-[var(--color-accent)]" />
                         )}
                       </div>
                       <p className="text-[12px] text-[var(--color-muted)] mt-1 leading-relaxed">
-                        Inspirado en las salas de lectura clásicas: lino pergamino (<code>#F4F1EA</code>), verde biblioteca (<code>#1E3F32</code>), salvia suave (<code>#D5E2DA</code>) y latón antiguo (<code>#C88A36</code>).
+                        Inspirado en el papel pergamino y salas de lectura: lino cálido (<code>#F4F1EA</code>), verde biblioteca (<code>#1E3F32</code>), salvia suave (<code>#D5E2DA</code>) y latón antiguo (<code>#C88A36</code>).
                       </p>
                     </div>
                   </div>
@@ -996,15 +1007,15 @@ export default function SettingsModal({
                   <button
                     onClick={e => {
                       e.stopPropagation()
-                      handleSelectTheme('exlibris')
+                      handleSelectTheme('pergamino')
                     }}
                     className={`w-full py-2 px-3 rounded-xl text-[12px] font-bold transition-colors cursor-pointer ${
-                      selectedTheme === 'exlibris'
+                      selectedTheme === 'pergamino' || selectedTheme === 'exlibris'
                         ? 'bg-[var(--color-accent)] text-[var(--color-on-accent)]'
                         : 'border border-[var(--color-line)] bg-[var(--color-surface)] hover:bg-[var(--color-bg)] text-[var(--color-ink)]'
                     }`}
                   >
-                    {selectedTheme === 'exlibris' ? 'Tema seleccionado' : 'Aplicar tema «Ex Libris»'}
+                    {selectedTheme === 'pergamino' || selectedTheme === 'exlibris' ? 'Tema seleccionado' : 'Aplicar tema «Pergamino»'}
                   </button>
                 </div>
               </div>
@@ -1091,6 +1102,67 @@ export default function SettingsModal({
                       Restablecer detección automática
                     </button>
                   )}
+                </div>
+              </div>
+
+              {/* Kindle Wireless / Send to Kindle Card */}
+              <div className="p-4 rounded-2xl border border-[var(--color-line)] bg-amber-500/5 dark:bg-amber-950/15 flex flex-col gap-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                      <Wifi className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-[14px] text-[var(--color-ink)] flex items-center gap-2">
+                        <span>Amazon Kindle • Transferencia inalámbrica</span>
+                        <span className="text-[10.5px] font-bold uppercase tracking-wider bg-amber-500/20 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-full">
+                          Sin cables USB
+                        </span>
+                      </h4>
+                      <p className="text-[12px] text-[var(--color-muted)] mt-0.5">
+                        Sube libros directamente a tu Kindle a través de la web oficial de Amazon (hasta 200 MB por libro en formato EPUB, PDF o MOBI).
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-[12.5px] text-[var(--color-muted)] leading-relaxed bg-[var(--color-surface)]/60 border border-[var(--color-line)]/70 rounded-xl p-3">
+                  <span className="font-semibold text-[var(--color-ink)]">¿Cómo funciona en Bibliosfera?</span> Al pulsar <strong>«Subir a Kindle (Web)»</strong> en cualquier libro o lote de libros, la aplicación abre automáticamente la web oficial de Amazon Send to Kindle y te selecciona el archivo en tu Finder / Explorador para que solo tengas que arrastrarlo a la página.
+                </div>
+
+                <div className="flex items-center justify-between flex-wrap gap-2.5 pt-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[12px] text-[var(--color-muted)] font-medium">Tienda de Amazon:</span>
+                    <select
+                      value={kindleDomain}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        setKindleDomain(val)
+                        localStorage.setItem('bibliosfera_kindle_domain', val)
+                        setStatusMsg({
+                          type: 'success',
+                          text: `Dominio de Kindle configurado en https://www.${val}/sendtokindle`
+                        })
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] text-[12px] font-semibold text-[var(--color-ink)] cursor-pointer"
+                    >
+                      <option value="amazon.es">Amazon España (amazon.es)</option>
+                      <option value="amazon.com">Amazon Internacional (amazon.com)</option>
+                      <option value="amazon.com.mx">Amazon México (amazon.com.mx)</option>
+                    </select>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      if (typeof window.api?.openSendToKindleWeb === 'function') {
+                        window.api.openSendToKindleWeb(kindleDomain)
+                      }
+                    }}
+                    className="py-1.5 px-3.5 rounded-xl border border-amber-600/30 hover:bg-amber-500/10 text-amber-700 dark:text-amber-300 font-bold text-[12px] transition-colors flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Abrir Send to Kindle Web</span>
+                  </button>
                 </div>
               </div>
             </div>

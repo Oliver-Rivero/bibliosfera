@@ -22,6 +22,8 @@ declare global {
       sendToDevice: (id: string) => Promise<{ success: boolean; message: string }>;
       sendMultipleToDevice: (bookIds: string[], targetFolder?: string) => Promise<{ success: boolean; count: number; message: string }>;
       getConnectedDevice: () => Promise<{ connected: boolean; name: string; volumePath: string; targetFolder: string } | null>;
+      sendToKindleWeb: (bookIds: string | string[], options?: { domain?: string }) => Promise<{ success: boolean; message: string }>;
+      openSendToKindleWeb: (domain?: string) => Promise<{ success: boolean }>;
       shareByEmail: (id: string, options?: { toEmail?: string }) => Promise<{ success: boolean; message: string }>;
       enrichLibraryBook: (id: string, query?: string) => Promise<LibraryBook | null>;
       reorderLibraryBooks: (orderedIds: string[]) => Promise<LibraryBook[]>;

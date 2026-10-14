@@ -21,9 +21,10 @@
 }
 
 /* =========================================================
-   TEMA 1: ELEGANTE (Predeterminado)
+   TEMA 1: CLÁSICO (Predeterminado)
    ========================================================= */
 :root,
+html[data-theme="clasico"],
 html[data-theme="elegante"] {
   --color-brown: #663A24;
   --color-teal: #285666;
@@ -43,6 +44,7 @@ html[data-theme="elegante"] {
 }
 
 html.dark,
+html.dark[data-theme="clasico"],
 html.dark[data-theme="elegante"] {
   --color-bg: #14232a;
   --color-surface: #1c323b;
@@ -95,8 +97,9 @@ html.dark[data-theme="cactusito"] {
 }
 
 /* =========================================================
-   TEMA 3: EX LIBRIS (Verde Biblioteca, Lino, Salvia y Latón)
+   TEMA 3: PERGAMINO (Verde Biblioteca, Lino, Salvia y Latón)
    ========================================================= */
+html[data-theme="pergamino"],
 html[data-theme="exlibris"] {
   --color-brown: #8C5828;
   --color-teal: #1E3F32;
@@ -115,6 +118,7 @@ html[data-theme="exlibris"] {
   --color-star: #C88A36;
 }
 
+html.dark[data-theme="pergamino"],
 html.dark[data-theme="exlibris"] {
   --color-brown: #8C5828;
   --color-teal: #1E3F32;

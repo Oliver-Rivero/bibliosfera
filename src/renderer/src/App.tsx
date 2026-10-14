@@ -99,14 +99,17 @@ export default function App() {
   }
 
   useEffect(() => {
-    const savedAppTheme = localStorage.getItem('bibliosfera_app_theme') || 'elegante'
+    const rawTheme = localStorage.getItem('bibliosfera_app_theme') || 'clasico'
+    const savedAppTheme = rawTheme === 'elegante' ? 'clasico' : rawTheme === 'exlibris' ? 'pergamino' : rawTheme
     document.documentElement.setAttribute('data-theme', savedAppTheme)
+    localStorage.setItem('bibliosfera_app_theme', savedAppTheme)
 
     if (typeof window.api?.getLibraryStorageDir === 'function') {
       window.api.getLibraryStorageDir().then(info => {
         if (info?.themeName) {
-          document.documentElement.setAttribute('data-theme', info.themeName)
-          localStorage.setItem('bibliosfera_app_theme', info.themeName)
+          const norm = info.themeName === 'elegante' ? 'clasico' : info.themeName === 'exlibris' ? 'pergamino' : info.themeName
+          document.documentElement.setAttribute('data-theme', norm)
+          localStorage.setItem('bibliosfera_app_theme', norm)
         }
       }).catch(() => {})
     }

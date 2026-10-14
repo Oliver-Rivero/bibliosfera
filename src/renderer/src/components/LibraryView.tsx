@@ -28,7 +28,9 @@ import {
   CheckSquare,
   Square,
   Zap,
-  ArrowUpDown
+  ArrowUpDown,
+  Wifi,
+  ExternalLink
 } from 'lucide-react'
 import SettingsModal from './SettingsModal'
 
@@ -179,12 +181,23 @@ export default function LibraryView({ onMarkAsRead, readBookIds, onBooksCountCha
   const handleSendToDevice = async (book: LibraryBook) => {
     const dev = connectedDevice || (await window.api.getConnectedDevice())
     if (!dev || !dev.connected) {
-      showToast('No hay ningún eReader conectado. Conecta un eReader para realizar la transferencia.')
+      showToast('No hay eReader USB conectado. Si tienes un Kindle, puedes usar "Subir a Kindle (Web)" sin cables.')
       return
     }
     showToast(`Transfiriendo "${book.title}" a ${dev.name}...`)
     const res = await window.api.sendToDevice(book.id)
     showToast(res.message)
+  }
+
+  const handleSendToKindleWeb = async (book: LibraryBook) => {
+    const domain = localStorage.getItem('bibliosfera_kindle_domain') || 'amazon.es'
+    showToast(`Abriendo Send to Kindle (${domain}) para "${book.title}"...`)
+    try {
+      const res = await window.api.sendToKindleWeb(book.id, { domain })
+      showToast(res.message)
+    } catch (e: any) {
+      showToast(`Error al abrir Send to Kindle: ${e?.message || 'Error desconocido'}`)
+    }
   }
 
   const handleShareByEmail = async (book: LibraryBook) => {
@@ -221,6 +234,20 @@ export default function LibraryView({ onMarkAsRead, readBookIds, onBooksCountCha
     if (res.success) {
       setSelectedBookIds([])
       setIsSelectMode(false)
+    }
+  }
+
+  const handleTransferSelectionToKindleWeb = async () => {
+    if (selectedBookIds.length === 0) return
+    const domain = localStorage.getItem('bibliosfera_kindle_domain') || 'amazon.es'
+    showToast(`Abriendo Send to Kindle (${domain}) para ${selectedBookIds.length} libros...`)
+    try {
+      const res = await window.api.sendToKindleWeb(selectedBookIds, { domain })
+      showToast(res.message)
+      setSelectedBookIds([])
+      setIsSelectMode(false)
+    } catch (e: any) {
+      showToast(`Error al abrir Send to Kindle: ${e?.message || 'Error desconocido'}`)
     }
   }
 
@@ -700,26 +727,40 @@ export default function LibraryView({ onMarkAsRead, readBookIds, onBooksCountCha
         <div className="rounded-[18px] px-5 py-3 bg-[var(--color-surface)] border border-[var(--color-line)] flex flex-wrap items-center justify-between gap-3 text-[12.5px] text-[var(--color-muted)] shadow-2xs">
           <div className="flex items-center gap-2.5">
             <Tablet className="w-4 h-4 text-[var(--color-muted)] shrink-0" />
-            <span>Conecta tu eReader o memoria USB para detectarlo automáticamente y transferir libros arrastrando y soltando.</span>
+            <span>Conecta tu eReader por USB para transferir libros arrastrando y soltando.</span>
           </div>
-          <button
-            onClick={async () => {
-              const dev = await window.api.getConnectedDevice()
-              if (dev && dev.connected) {
-                setConnectedDevice(dev)
-                showToast(`Dispositivo detectado: ${dev.name}`)
-              } else {
-                const res = await window.api.selectCustomDeviceFolder()
-                if (res.success && res.device) {
-                  setConnectedDevice(res.device)
-                  showToast(`Carpeta de eReader vinculada: ${res.path}`)
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              onClick={() => {
+                const domain = localStorage.getItem('bibliosfera_kindle_domain') || 'amazon.es'
+                window.api.openSendToKindleWeb(domain)
+              }}
+              className="text-amber-700 dark:text-amber-400 hover:underline font-semibold cursor-pointer text-[12px] flex items-center gap-1.5"
+              title="Abrir Send to Kindle Web para enviar libros sin cables"
+            >
+              <Wifi className="w-3.5 h-3.5" />
+              <span>¿Tienes Kindle? Enviar sin cables</span>
+            </button>
+            <span className="text-[var(--color-line)] hidden sm:inline">•</span>
+            <button
+              onClick={async () => {
+                const dev = await window.api.getConnectedDevice()
+                if (dev && dev.connected) {
+                  setConnectedDevice(dev)
+                  showToast(`Dispositivo detectado: ${dev.name}`)
+                } else {
+                  const res = await window.api.selectCustomDeviceFolder()
+                  if (res.success && res.device) {
+                    setConnectedDevice(res.device)
+                    showToast(`Carpeta de eReader vinculada: ${res.path}`)
+                  }
                 }
-              }
-            }}
-            className="text-[var(--color-accent)] hover:underline font-semibold cursor-pointer text-[12px]"
-          >
-            Detectar o vincular carpeta manualmente
-          </button>
+              }}
+              className="text-[var(--color-accent)] hover:underline font-semibold cursor-pointer text-[12px]"
+            >
+              Detectar o vincular carpeta manualmente
+            </button>
+          </div>
         </div>
       )}
 
@@ -1522,6 +1563,17 @@ export default function LibraryView({ onMarkAsRead, readBookIds, onBooksCountCha
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
+                        handleSendToKindleWeb(book)
+                      }}
+                      className="p-2 rounded-full hover:bg-amber-500/15 text-[var(--color-muted)] hover:text-amber-600 dark:hover:text-amber-400 transition-colors cursor-pointer hidden sm:inline-flex"
+                      title="Subir a Kindle vía Send to Kindle Web (sin cables)"
+                    >
+                      <Wifi className="w-4 h-4 stroke-[2]" />
+                    </button>
+
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
                         handleShareByEmail(book)
                       }}
                       className="p-2 rounded-full hover:bg-[var(--color-line)]/50 text-[var(--color-muted)] hover:text-[var(--color-ink)] transition-colors cursor-pointer hidden sm:inline-flex"
@@ -1683,25 +1735,34 @@ export default function LibraryView({ onMarkAsRead, readBookIds, onBooksCountCha
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <button
+                  onClick={() => handleSendToKindleWeb(inspectingBook)}
+                  className="py-2.5 px-4 rounded-xl border border-amber-600/35 bg-amber-500/10 hover:bg-amber-500/20 text-amber-800 dark:text-amber-200 text-[13px] font-bold transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                  title="Subir a Kindle mediante Send to Kindle Web (sin cables)"
+                >
+                  <Wifi className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                  <span>Subir a Kindle (Web)</span>
+                </button>
+
+                <button
                   onClick={() => handleShareByEmail(inspectingBook)}
                   className="py-2.5 px-4 rounded-xl border border-[var(--color-line)] hover:bg-[var(--color-bg)] text-[13px] font-medium text-[var(--color-muted)] hover:text-[var(--color-ink)] transition-colors flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Mail className="w-4 h-4" />
                   <span>Compartir por correo</span>
                 </button>
-
-                <button
-                  onClick={() => {
-                    const b = inspectingBook
-                    setInspectingBook(null)
-                    onMarkAsRead(b)
-                  }}
-                  className="py-2.5 px-4 rounded-xl border border-emerald-600/50 hover:bg-emerald-50 text-[13px] font-bold text-emerald-800 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Check className="w-4 h-4 stroke-[2.5]" />
-                  <span>Pasar a Mis lecturas</span>
-                </button>
               </div>
+
+              <button
+                onClick={() => {
+                  const b = inspectingBook
+                  setInspectingBook(null)
+                  onMarkAsRead(b)
+                }}
+                className="py-2.5 px-4 rounded-xl border border-emerald-600/50 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-[13px] font-bold text-emerald-800 dark:text-emerald-300 transition-colors flex items-center justify-center gap-1.5 cursor-pointer w-full"
+              >
+                <Check className="w-4 h-4 stroke-[2.5]" />
+                <span>Pasar a Mis lecturas</span>
+              </button>
 
               <div className="flex items-center justify-between text-[12px] text-[var(--color-muted)] pt-2 px-1">
                 <div className="flex gap-4">
@@ -1943,6 +2004,16 @@ export default function LibraryView({ onMarkAsRead, readBookIds, onBooksCountCha
           >
             <Tablet className="w-4 h-4" />
             <span>Pasar a {connectedDevice ? connectedDevice.name : 'eReader'}</span>
+          </button>
+
+          {/* Transfer to Kindle Web button */}
+          <button
+            onClick={handleTransferSelectionToKindleWeb}
+            className="font-bold text-amber-300 hover:text-amber-200 transition-colors flex items-center gap-1.5 cursor-pointer py-1 px-2.5 rounded-lg hover:bg-white/10"
+            title="Subir libros seleccionados a tu Kindle mediante Send to Kindle Web (sin cables)"
+          >
+            <Wifi className="w-4 h-4 text-amber-400" />
+            <span>Subir a Kindle (Web)</span>
           </button>
 
           {/* Mark as read button */}
