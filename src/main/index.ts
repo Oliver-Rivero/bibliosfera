@@ -1559,10 +1559,8 @@ app.whenReady().then(async () => {
   })
 
   // -------------------------------------------------------------
-  // Send to Kindle Web (Dedicated window with persistent session & auto-upload)
+  // Send to Kindle Web (Default browser + Finder selection companion)
   // -------------------------------------------------------------
-  let kindleUploadWin: BrowserWindow | null = null
-
   ipcMain.handle('send-to-kindle-web', async (_, bookIds: string | string[], options?: { domain?: string }) => {
     const ids = Array.isArray(bookIds) ? bookIds : [bookIds]
     if (ids.length === 0) {
@@ -1591,166 +1589,29 @@ app.whenReady().then(async () => {
 
     const domain = options?.domain || 'amazon.es'
     const kindleUrl = `https://www.${domain}/sendtokindle`
-    const filePaths = existingFiles.map(f => f.path)
 
-    // Highlight file in Finder / Explorer and copy to clipboard as seamless companion
-    const fmName = process.platform === 'win32' ? 'el Explorador de archivos' : 'el Finder'
-    if (existingFiles.length === 1) {
-      shell.showItemInFolder(existingFiles[0].path)
-      if (process.platform === 'darwin') {
-        try {
-          const { execSync } = require('child_process')
-          execSync(`osascript -e 'set the clipboard to POSIX file "${existingFiles[0].path.replace(/"/g, '\\"')}"'`)
-        } catch {}
+    // 1. Reveal selected file(s) in Finder (macOS) or Explorer (Windows)
+    if (process.platform === 'darwin') {
+      try {
+        const { execSync } = require('child_process')
+        const posixFiles = existingFiles.map(f => `POSIX file "${f.path.replace(/"/g, '\\"')}"`).join(', ')
+        execSync(`osascript -e 'tell application "Finder" to reveal {${posixFiles}}' -e 'tell application "Finder" to activate'`)
+      } catch {
+        shell.showItemInFolder(existingFiles[0].path)
       }
+    } else {
+      shell.showItemInFolder(existingFiles[0].path)
     }
 
+    // 2. Open default browser (Safari, Chrome, Arc...) where the user's session is active
     try {
-      if (kindleUploadWin && !kindleUploadWin.isDestroyed()) {
-        kindleUploadWin.focus()
-      } else {
-        kindleUploadWin = new BrowserWindow({
-          width: 1060,
-          height: 820,
-          minWidth: 780,
-          minHeight: 600,
-          title: 'Subir a Kindle — Send to Kindle (Bibliosfera)',
-          autoHideMenuBar: true,
-          webPreferences: {
-            partition: 'persist:amazon_kindle',
-            nodeIntegration: false,
-            contextIsolation: true
-          }
-        })
+      await shell.openExternal(kindleUrl)
+    } catch {}
 
-        kindleUploadWin.on('closed', () => {
-          kindleUploadWin = null
-        })
-      }
-
-      const bookTitles = existingFiles.map(f => f.title).join(', ')
-      const shortTitles = bookTitles.length > 45 ? `${existingFiles.length} libros seleccionados` : `"${bookTitles}"`
-
-      const injectBanner = async (win: BrowserWindow, msg: string, bgColor: string = '#285666') => {
-        try {
-          await win.webContents.executeJavaScript(`
-            (() => {
-              let banner = document.getElementById('bibliosfera-kindle-bar');
-              if (!banner) {
-                banner = document.createElement('div');
-                banner.id = 'bibliosfera-kindle-bar';
-                banner.style.position = 'fixed';
-                banner.style.top = '0';
-                banner.style.left = '0';
-                banner.style.right = '0';
-                banner.style.zIndex = '9999999';
-                banner.style.color = '#FFFFFF';
-                banner.style.padding = '10px 16px';
-                banner.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-                banner.style.fontSize = '13px';
-                banner.style.fontWeight = '600';
-                banner.style.textAlign = 'center';
-                banner.style.boxShadow = '0 3px 12px rgba(0,0,0,0.25)';
-                banner.style.transition = 'all 0.3s ease';
-                banner.style.display = 'flex';
-                banner.style.alignItems = 'center';
-                banner.style.justifyContent = 'center';
-                banner.style.gap = '8px';
-                document.body.prepend(banner);
-                document.body.style.paddingTop = '42px';
-              }
-              banner.style.backgroundColor = ${JSON.stringify(bgColor)};
-              banner.innerHTML = ${JSON.stringify(msg)};
-            })()
-          `)
-        } catch {}
-      }
-
-      const tryAutoUpload = async (win: BrowserWindow) => {
-        const url = win.webContents.getURL()
-        if (url.includes('/signin') || url.includes('/ap/signin')) {
-          await injectBanner(
-            win,
-            '🔐 Por favor, inicia sesión con tu cuenta de Amazon Kindle. Bibliosfera recordará tu cuenta y cargará tus libros automáticamente.',
-            '#8C5828'
-          )
-          return false
-        }
-
-        if (!url.includes('/sendtokindle')) return false
-
-        await injectBanner(win, `📚 Bibliosfera: Preparando ${shortTitles} en Send to Kindle...`, '#285666')
-
-        // Poll for input[type="file"] and inject via Chrome DevTools Protocol
-        for (let attempt = 0; attempt < 15; attempt++) {
-          if (win.isDestroyed()) return false
-          try {
-            const hasInput = await win.webContents.executeJavaScript(`
-              Boolean(document.querySelector('input[type="file"]'))
-            `)
-
-            if (hasInput) {
-              if (!win.webContents.debugger.isAttached()) {
-                win.webContents.debugger.attach('1.3')
-              }
-              const { root } = await win.webContents.debugger.sendCommand('DOM.getDocument')
-              const { nodeId } = await win.webContents.debugger.sendCommand('DOM.querySelector', {
-                nodeId: root.nodeId,
-                selector: 'input[type="file"]'
-              })
-
-              if (nodeId) {
-                await win.webContents.debugger.sendCommand('DOM.setFileInputFiles', {
-                  nodeId,
-                  files: filePaths
-                })
-
-                await win.webContents.executeJavaScript(`
-                  (() => {
-                    const inp = document.querySelector('input[type="file"]');
-                    if (inp) {
-                      inp.dispatchEvent(new Event('change', { bubbles: true }));
-                      inp.dispatchEvent(new Event('input', { bubbles: true }));
-                    }
-                  })()
-                `)
-
-                await injectBanner(
-                  win,
-                  '✅ ¡Libros cargados en Amazon! Revisa la lista y pulsa el botón amarillo "Enviar" abajo para completar.',
-                  '#1E3F32'
-                )
-                return true
-              }
-            }
-          } catch (e) {
-            // retry
-          }
-          await new Promise(r => setTimeout(r, 600))
-        }
-
-        await injectBanner(
-          win,
-          `📖 ${shortTitles} listos en ${fmName}. Puedes arrastrarlos a la web para enviarlos.`,
-          '#285666'
-        )
-        return false
-      }
-
-      kindleUploadWin.webContents.on('did-finish-load', () => {
-        if (kindleUploadWin && !kindleUploadWin.isDestroyed()) {
-          tryAutoUpload(kindleUploadWin)
-        }
-      })
-
-      await kindleUploadWin.loadURL(kindleUrl)
-
-      return {
-        success: true,
-        message: `¡Ventana Send to Kindle abierta!\n${existingFiles.length === 1 ? `"${existingFiles[0].title}"` : `${existingFiles.length} libros`} listos.`
-      }
-    } catch (err: any) {
-      return { success: false, message: `Error al abrir Send to Kindle: ${err.message}` }
+    const countLabel = existingFiles.length === 1 ? `"${existingFiles[0].title}"` : `${existingFiles.length} libros`
+    return {
+      success: true,
+      message: `Send to Kindle abierto en tu navegador. Tienes ${countLabel} en Finder listos para arrastrar.`
     }
   })
 

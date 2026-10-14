@@ -8,7 +8,7 @@ import {
   Square, 
   Check, 
   Loader2, 
-  ShieldCheck
+  ExternalLink
 } from 'lucide-react'
 
 interface KindleUploadModalProps {
@@ -255,10 +255,10 @@ export default function KindleUploadModal({
         </div>
 
         {/* Informative Security & Workflow Banner */}
-        <div className="px-5 py-3 bg-amber-500/5 dark:bg-amber-950/20 border-t border-[var(--color-line)]/70 flex items-start gap-2.5 text-[12px] text-[var(--color-muted)] shrink-0">
-          <ShieldCheck className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+        <div className="px-5 py-3 bg-amber-500/10 dark:bg-amber-950/20 border-t border-[var(--color-line)]/70 flex items-start gap-2.5 text-[12px] text-[var(--color-muted)] shrink-0">
+          <ExternalLink className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
           <span>
-            Se abrirá la ventana oficial de <strong>Send to Kindle</strong>. Si es la primera vez, inicia sesión en Amazon: Bibliosfera recordará tu cuenta y cargará tus libros automáticamente.
+            Se abrirá <strong>Send to Kindle</strong> en tu navegador web habitual con tu sesión de Amazon activa, y <strong>Finder</strong> te mostrará tus libros seleccionados listos para arrastrarlos y soltarlos en un instante.
           </span>
         </div>
 
@@ -280,17 +280,17 @@ export default function KindleUploadModal({
             {isUploading ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Abriendo Send to Kindle...</span>
+                <span>Abriendo navegador y Finder...</span>
               </>
             ) : (
               <>
-                <Wifi className="w-4 h-4" />
+                <ExternalLink className="w-4 h-4" />
                 <span>
                   {selectedIds.length === 0
                     ? 'Selecciona al menos un libro'
                     : selectedIds.length === 1
-                      ? 'Subir 1 libro a Kindle'
-                      : `Subir ${selectedIds.length} libros a Kindle`}
+                      ? 'Abrir navegador y preparar 1 libro'
+                      : `Abrir navegador y preparar ${selectedIds.length} libros`}
                 </span>
               </>
             )}
