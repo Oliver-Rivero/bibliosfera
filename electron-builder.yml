@@ -27,7 +27,7 @@ nsis:
   oneClick: true
   perMachine: false
 mac:
-  identity: null
+  identity: "-"
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSCameraUsageDescription: Application requests access to the device's camera.

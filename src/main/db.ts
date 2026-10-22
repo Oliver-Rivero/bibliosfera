@@ -156,11 +156,9 @@ export async function initDatabase(userDataPath: string): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_readings_date_read ON readings(date_read);
     CREATE INDEX IF NOT EXISTS idx_readings_rating ON readings(rating);
     CREATE INDEX IF NOT EXISTS idx_readings_author ON readings(author);
-    CREATE INDEX IF NOT EXISTS idx_readings_user_id ON readings(user_id);
     CREATE INDEX IF NOT EXISTS idx_library_status ON library_books(status);
     CREATE INDEX IF NOT EXISTS idx_library_format ON library_books(format);
     CREATE INDEX IF NOT EXISTS idx_library_author ON library_books(author);
-    CREATE INDEX IF NOT EXISTS idx_library_user_id ON library_books(user_id);
   `)
 
   // Migration for existing tables: add synopsis and isbn if missing in readings
@@ -178,11 +176,11 @@ export async function initDatabase(userDataPath: string): Promise<void> {
   } catch (e) {}
 
   try {
-    db.run(`CREATE INDEX IF NOT EXISTS idx_readings_user_id ON readings(user_id);`)
+    db.run(`UPDATE readings SET user_id = 'default' WHERE user_id IS NULL OR user_id = '';`)
   } catch (e) {}
 
   try {
-    db.run(`UPDATE readings SET user_id = 'default' WHERE user_id IS NULL OR user_id = '';`)
+    db.run(`CREATE INDEX IF NOT EXISTS idx_readings_user_id ON readings(user_id);`)
   } catch (e) {}
 
   // Migration for quotes_json in readings
@@ -205,21 +203,21 @@ export async function initDatabase(userDataPath: string): Promise<void> {
   } catch (e) {}
 
   try {
-    db.run(`CREATE INDEX IF NOT EXISTS idx_library_user_id ON library_books(user_id);`)
-  } catch (e) {}
-
-  try {
     db.run(`UPDATE library_books SET user_id = 'default' WHERE user_id IS NULL OR user_id = '';`)
   } catch (e) {}
 
-  // Seed default user if users table is empty
   try {
-    const userCountRes = db.exec(`SELECT COUNT(*) as count FROM users;`)
-    const userCount = (userCountRes[0]?.values[0]?.[0] as number) || 0
-    if (userCount === 0) {
+    db.run(`CREATE INDEX IF NOT EXISTS idx_library_user_id ON library_books(user_id);`)
+  } catch (e) {}
+
+  // Ensure default user exists in users table
+  try {
+    const hasDefaultRes = db.exec(`SELECT COUNT(*) as count FROM users WHERE id = 'default';`)
+    const hasDefault = (hasDefaultRes[0]?.values[0]?.[0] as number) || 0
+    if (hasDefault === 0) {
       const now = new Date().toISOString()
       db.run(
-        `INSERT INTO users (id, name, avatar, color, theme_name, color_mode, view_mode, bio, created_at)
+        `INSERT OR IGNORE INTO users (id, name, avatar, color, theme_name, color_mode, view_mode, bio, created_at)
          VALUES ('default', 'Mi Biblioteca', '📚', '#285666', 'clasico', 'light', 'list', 'Perfil principal', ?);`,
         [now]
       )
@@ -336,6 +334,41 @@ export function getStoredUsers(): UserProfile[] {
       })
     }
     stmt.free()
+
+    // If no users exist, seed and return the default user
+    if (users.length === 0) {
+      const defaultUser: UserProfile = {
+        id: 'default',
+        name: 'Mi Biblioteca',
+        avatar: '📚',
+        color: '#285666',
+        themeName: 'clasico',
+        colorMode: 'light',
+        viewMode: 'list',
+        bio: 'Perfil principal',
+        createdAt: new Date().toISOString()
+      }
+      try {
+        db.run(
+          `INSERT OR IGNORE INTO users (id, name, avatar, color, theme_name, color_mode, view_mode, bio, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            defaultUser.id,
+            defaultUser.name,
+            defaultUser.avatar,
+            defaultUser.color,
+            defaultUser.themeName,
+            defaultUser.colorMode,
+            defaultUser.viewMode,
+            defaultUser.bio || null,
+            defaultUser.createdAt || new Date().toISOString()
+          ]
+        )
+        flushToDisk()
+      } catch {}
+      return [defaultUser]
+    }
+
     return users
   } catch (err) {
     console.error(`[SQLite] Error in getStoredUsers:`, err)

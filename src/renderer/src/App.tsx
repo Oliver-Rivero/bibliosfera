@@ -164,6 +164,8 @@ export default function App() {
         }
         setLibraryRefreshKey(k => k + 1)
         refreshLibraryCount()
+        const uList = await window.api.getUsers()
+        if (Array.isArray(uList)) setUsers(uList)
         setShowUserDropdown(false)
       }
     } catch (err) {
@@ -1195,6 +1197,9 @@ export default function App() {
           onMarkAsRead={handleLibraryMarkAsRead}
           readBookIds={books.map(b => b.libraryBookId).filter(Boolean) as string[]}
           onBooksCountChange={setLibraryCount}
+          currentUser={currentUser}
+          onSwitchUser={handleSwitchUser}
+          onUserListUpdated={loadAllUsers}
         />
       )}
 
@@ -1262,6 +1267,7 @@ export default function App() {
           setShowSettingsModal(false)
           setSettingsInitialTab('export_import')
           refreshLibraryCount()
+          loadAllUsers()
         }}
         totalReadingsCount={books.length}
         totalLibraryCount={libraryCount}

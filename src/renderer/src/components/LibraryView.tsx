@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { LibraryBook } from '../types'
+import { LibraryBook, UserProfile } from '../types'
 import { 
   Library, 
   BookOpen, 
@@ -40,9 +40,19 @@ interface LibraryViewProps {
   onMarkAsRead: (libraryBook: LibraryBook) => void
   readBookIds: string[]
   onBooksCountChange?: (count: number) => void
+  currentUser?: UserProfile | null
+  onSwitchUser?: (userId: string) => Promise<void>
+  onUserListUpdated?: () => void
 }
 
-export default function LibraryView({ onMarkAsRead, readBookIds = [], onBooksCountChange }: LibraryViewProps) {
+export default function LibraryView({
+  onMarkAsRead,
+  readBookIds = [],
+  onBooksCountChange,
+  currentUser,
+  onSwitchUser,
+  onUserListUpdated
+}: LibraryViewProps) {
   const [books, setBooks] = useState<LibraryBook[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'read'>('all')
@@ -2073,6 +2083,9 @@ export default function LibraryView({ onMarkAsRead, readBookIds = [], onBooksCou
         selectedLibraryIds={selectedBookIds}
         totalReadingsCount={readBookIds.length}
         totalLibraryCount={books.length}
+        currentUser={currentUser}
+        onSwitchUser={onSwitchUser}
+        onUserListUpdated={onUserListUpdated}
         onUploadBook={handleUpload}
       />
 
