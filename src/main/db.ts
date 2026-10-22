@@ -15,6 +15,8 @@ export interface Book {
   comment?: string
   coverUrl?: string
   libraryBookId?: string
+  userId?: string
+  quotes?: any[]
   [key: string]: any
 }
 
@@ -31,17 +33,31 @@ export interface LibraryBook {
   synopsis?: string
   dateAdded: string
   status?: 'pending' | 'reading' | 'read'
+  userId?: string
   [key: string]: any
+}
+
+export interface UserProfile {
+  id: string
+  name: string
+  avatar: string
+  color: string
+  themeName: 'clasico' | 'cactusito' | 'pergamino' | string
+  colorMode: 'light' | 'dark'
+  viewMode: 'list' | 'shelf' | 'spines'
+  bio?: string
+  createdAt?: string
 }
 
 let db: Database | null = null
 let dbFilePath = ''
 let isInitialized = false
+let activeUserId = 'default'
 
 /**
  * Locate and read sql-wasm.wasm binary buffer reliably across dev & production
  */
-function getWasmBinary(): Buffer {
+export function getWasmBinary(): Buffer {
   const possiblePaths = [
     require.resolve('sql.js/dist/sql-wasm.wasm'),
     join(__dirname, '../../node_modules/sql.js/dist/sql-wasm.wasm'),
@@ -87,6 +103,18 @@ export async function initDatabase(userDataPath: string): Promise<void> {
 
   // Create tables and indexes
   db.run(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      avatar TEXT,
+      color TEXT,
+      theme_name TEXT DEFAULT 'clasico',
+      color_mode TEXT DEFAULT 'light',
+      view_mode TEXT DEFAULT 'list',
+      bio TEXT,
+      created_at TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS readings (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -102,7 +130,9 @@ export async function initDatabase(userDataPath: string): Promise<void> {
       library_book_id TEXT,
       synopsis TEXT,
       isbn TEXT,
-      extra_json TEXT
+      extra_json TEXT,
+      user_id TEXT DEFAULT 'default',
+      quotes_json TEXT
     );
 
     CREATE TABLE IF NOT EXISTS library_books (
@@ -119,15 +149,18 @@ export async function initDatabase(userDataPath: string): Promise<void> {
       date_added TEXT,
       status TEXT DEFAULT 'pending',
       sort_order INTEGER,
-      extra_json TEXT
+      extra_json TEXT,
+      user_id TEXT DEFAULT 'default'
     );
 
     CREATE INDEX IF NOT EXISTS idx_readings_date_read ON readings(date_read);
     CREATE INDEX IF NOT EXISTS idx_readings_rating ON readings(rating);
     CREATE INDEX IF NOT EXISTS idx_readings_author ON readings(author);
+    CREATE INDEX IF NOT EXISTS idx_readings_user_id ON readings(user_id);
     CREATE INDEX IF NOT EXISTS idx_library_status ON library_books(status);
     CREATE INDEX IF NOT EXISTS idx_library_format ON library_books(format);
     CREATE INDEX IF NOT EXISTS idx_library_author ON library_books(author);
+    CREATE INDEX IF NOT EXISTS idx_library_user_id ON library_books(user_id);
   `)
 
   // Migration for existing tables: add synopsis and isbn if missing in readings
@@ -139,6 +172,24 @@ export async function initDatabase(userDataPath: string): Promise<void> {
     db.run(`ALTER TABLE readings ADD COLUMN isbn TEXT;`)
   } catch (e) {}
 
+  // Migration for user_id in readings
+  try {
+    db.run(`ALTER TABLE readings ADD COLUMN user_id TEXT DEFAULT 'default';`)
+  } catch (e) {}
+
+  try {
+    db.run(`CREATE INDEX IF NOT EXISTS idx_readings_user_id ON readings(user_id);`)
+  } catch (e) {}
+
+  try {
+    db.run(`UPDATE readings SET user_id = 'default' WHERE user_id IS NULL OR user_id = '';`)
+  } catch (e) {}
+
+  // Migration for quotes_json in readings
+  try {
+    db.run(`ALTER TABLE readings ADD COLUMN quotes_json TEXT;`)
+  } catch (e) {}
+
   // Migration for existing tables: add sort_order column and index if missing
   try {
     db.run(`ALTER TABLE library_books ADD COLUMN sort_order INTEGER;`)
@@ -147,6 +198,35 @@ export async function initDatabase(userDataPath: string): Promise<void> {
   try {
     db.run(`CREATE INDEX IF NOT EXISTS idx_library_sort_order ON library_books(sort_order);`)
   } catch (e) {}
+
+  // Migration for user_id in library_books
+  try {
+    db.run(`ALTER TABLE library_books ADD COLUMN user_id TEXT DEFAULT 'default';`)
+  } catch (e) {}
+
+  try {
+    db.run(`CREATE INDEX IF NOT EXISTS idx_library_user_id ON library_books(user_id);`)
+  } catch (e) {}
+
+  try {
+    db.run(`UPDATE library_books SET user_id = 'default' WHERE user_id IS NULL OR user_id = '';`)
+  } catch (e) {}
+
+  // Seed default user if users table is empty
+  try {
+    const userCountRes = db.exec(`SELECT COUNT(*) as count FROM users;`)
+    const userCount = (userCountRes[0]?.values[0]?.[0] as number) || 0
+    if (userCount === 0) {
+      const now = new Date().toISOString()
+      db.run(
+        `INSERT INTO users (id, name, avatar, color, theme_name, color_mode, view_mode, bio, created_at)
+         VALUES ('default', 'Mi Biblioteca', '📚', '#285666', 'clasico', 'light', 'list', 'Perfil principal', ?);`,
+        [now]
+      )
+    }
+  } catch (e) {
+    console.error('[SQLite] Error ensuring default user:', e)
+  }
 
   // Auto-migrate from legacy JSON files if SQLite tables are empty
   await autoMigrateFromLegacyJson(userDataPath)
@@ -225,23 +305,165 @@ async function autoMigrateFromLegacyJson(userDataPath: string): Promise<void> {
 }
 
 // ============================================================================
+// USER PROFILES CRUD
+// ============================================================================
+
+export function getActiveUserId(): string {
+  return activeUserId
+}
+
+export function setActiveUserId(id: string): void {
+  activeUserId = id || 'default'
+}
+
+export function getStoredUsers(): UserProfile[] {
+  if (!db) return []
+  try {
+    const stmt = db.prepare(`SELECT id, name, avatar, color, theme_name, color_mode, view_mode, bio, created_at FROM users ORDER BY created_at ASC, id ASC`)
+    const users: UserProfile[] = []
+    while (stmt.step()) {
+      const row = stmt.getAsObject() as any
+      users.push({
+        id: row.id,
+        name: row.name || 'Usuario',
+        avatar: row.avatar || '📚',
+        color: row.color || '#285666',
+        themeName: row.theme_name || 'clasico',
+        colorMode: row.color_mode === 'dark' ? 'dark' : 'light',
+        viewMode: row.view_mode === 'shelf' || row.view_mode === 'spines' ? row.view_mode : 'list',
+        bio: row.bio || '',
+        createdAt: row.created_at || new Date().toISOString()
+      })
+    }
+    stmt.free()
+    return users
+  } catch (err) {
+    console.error(`[SQLite] Error in getStoredUsers:`, err)
+    return []
+  }
+}
+
+export function getStoredUser(id: string): UserProfile | null {
+  const users = getStoredUsers()
+  return users.find(u => u.id === id) || null
+}
+
+export function addStoredUser(user: Partial<UserProfile>): UserProfile {
+  const id = user.id || `user_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`
+  const name = user.name?.trim() || 'Nuevo lector'
+  const avatar = user.avatar || '📚'
+  const color = user.color || '#285666'
+  const themeName = user.themeName || 'clasico'
+  const colorMode = user.colorMode === 'dark' ? 'dark' : 'light'
+  const viewMode = user.viewMode === 'shelf' || user.viewMode === 'spines' ? user.viewMode : 'list'
+  const bio = user.bio || ''
+  const createdAt = user.createdAt || new Date().toISOString()
+
+  if (db) {
+    try {
+      db.run(
+        `INSERT OR REPLACE INTO users (id, name, avatar, color, theme_name, color_mode, view_mode, bio, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, name, avatar, color, themeName, colorMode, viewMode, bio, createdAt]
+      )
+      flushToDisk()
+    } catch (err) {
+      console.error(`[SQLite] Error in addStoredUser:`, err)
+    }
+  }
+
+  return { id, name, avatar, color, themeName, colorMode, viewMode, bio, createdAt }
+}
+
+export function updateStoredUser(id: string, updates: Partial<UserProfile>): UserProfile[] {
+  if (!db) return getStoredUsers()
+  const current = getStoredUser(id)
+  if (!current) return getStoredUsers()
+
+  const merged: UserProfile = {
+    ...current,
+    ...updates,
+    id: current.id // prevent id change
+  }
+
+  try {
+    db.run(
+      `UPDATE users SET name = ?, avatar = ?, color = ?, theme_name = ?, color_mode = ?, view_mode = ?, bio = ? WHERE id = ?`,
+      [
+        merged.name,
+        merged.avatar,
+        merged.color,
+        merged.themeName,
+        merged.colorMode,
+        merged.viewMode,
+        merged.bio || '',
+        id
+      ]
+    )
+    flushToDisk()
+  } catch (err) {
+    console.error(`[SQLite] Error in updateStoredUser:`, err)
+  }
+  return getStoredUsers()
+}
+
+export function deleteStoredUser(id: string): { success: boolean; users: UserProfile[]; newActiveUserId?: string; message?: string } {
+  if (!db) return { success: false, users: [], message: 'Base de datos no inicializada' }
+  const users = getStoredUsers()
+  if (users.length <= 1) {
+    return { success: false, users, message: 'No puedes eliminar el único perfil existente.' }
+  }
+
+  try {
+    db.run(`BEGIN TRANSACTION;`)
+    db.run(`DELETE FROM readings WHERE user_id = ?;`, [id])
+    db.run(`DELETE FROM library_books WHERE user_id = ?;`, [id])
+    db.run(`DELETE FROM users WHERE id = ?;`, [id])
+    db.run(`COMMIT;`)
+    flushToDisk()
+
+    const remaining = getStoredUsers()
+    let newActiveUserId: string | undefined = undefined
+    if (activeUserId === id) {
+      activeUserId = remaining[0]?.id || 'default'
+      newActiveUserId = activeUserId
+    }
+
+    return { success: true, users: remaining, newActiveUserId }
+  } catch (err) {
+    if (db) db.run(`ROLLBACK;`)
+    console.error(`[SQLite] Error in deleteStoredUser:`, err)
+    return { success: false, users: getStoredUsers(), message: String(err) }
+  }
+}
+
+// ============================================================================
 // READINGS (Mis Lecturas) CRUD
 // ============================================================================
 
-export function getStoredBooks(): Book[] {
+export function getStoredBooks(targetUserId?: string): Book[] {
   if (!db) return []
+  const uid = targetUserId || activeUserId || 'default'
   try {
     const stmt = db.prepare(`
-      SELECT id, title, author, year, genre, pages, rating, reading_time, date_read, comment, cover_url, library_book_id, synopsis, isbn, extra_json
+      SELECT id, title, author, year, genre, pages, rating, reading_time, date_read, comment, cover_url, library_book_id, synopsis, isbn, extra_json, user_id, quotes_json
       FROM readings
+      WHERE user_id = ?
       ORDER BY date_read DESC, id DESC
     `)
+    stmt.bind([uid])
     const books: Book[] = []
     while (stmt.step()) {
       const row = stmt.getAsObject() as any
       let extra: any = {}
       if (row.extra_json) {
         try { extra = JSON.parse(row.extra_json) } catch {}
+      }
+      let quotes: any[] = []
+      if (row.quotes_json) {
+        try { quotes = JSON.parse(row.quotes_json) } catch {}
+      } else if (extra.quotes && Array.isArray(extra.quotes)) {
+        quotes = extra.quotes
       }
       books.push({
         id: row.id,
@@ -258,6 +480,8 @@ export function getStoredBooks(): Book[] {
         libraryBookId: row.library_book_id || undefined,
         synopsis: row.synopsis || undefined,
         isbn: row.isbn || undefined,
+        userId: row.user_id || uid,
+        quotes: quotes.length > 0 ? quotes : undefined,
         ...extra
       })
     }
@@ -275,18 +499,19 @@ function toNullableNumber(val: any): number | null {
   return isNaN(num) ? null : num
 }
 
-export function setStoredBooks(books: Book[]): void {
+export function setStoredBooks(books: Book[], targetUserId?: string): void {
   if (!db) return
+  const uid = targetUserId || activeUserId || 'default'
   try {
     db.run(`BEGIN TRANSACTION;`)
-    db.run(`DELETE FROM readings;`)
+    db.run(`DELETE FROM readings WHERE user_id = ?;`, [uid])
     const stmt = db.prepare(`
-      INSERT OR REPLACE INTO readings (id, title, author, year, genre, pages, rating, reading_time, date_read, comment, cover_url, library_book_id, synopsis, isbn, extra_json)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO readings (id, title, author, year, genre, pages, rating, reading_time, date_read, comment, cover_url, library_book_id, synopsis, isbn, extra_json, user_id, quotes_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     for (const b of books) {
-      const knownKeys = new Set(['id', 'title', 'author', 'year', 'genre', 'pages', 'rating', 'readingTime', 'dateRead', 'comment', 'coverUrl', 'libraryBookId', 'synopsis', 'isbn'])
+      const knownKeys = new Set(['id', 'title', 'author', 'year', 'genre', 'pages', 'rating', 'readingTime', 'dateRead', 'comment', 'coverUrl', 'libraryBookId', 'synopsis', 'isbn', 'userId', 'quotes'])
       const extra: Record<string, any> = {}
       for (const k of Object.keys(b)) {
         if (!knownKeys.has(k)) extra[k] = b[k]
@@ -306,7 +531,9 @@ export function setStoredBooks(books: Book[]): void {
         b.libraryBookId || null,
         b.synopsis || null,
         b.isbn || null,
-        Object.keys(extra).length > 0 ? JSON.stringify(extra) : null
+        Object.keys(extra).length > 0 ? JSON.stringify(extra) : null,
+        uid,
+        b.quotes && b.quotes.length > 0 ? JSON.stringify(b.quotes) : null
       ])
     }
     stmt.free()
@@ -318,14 +545,15 @@ export function setStoredBooks(books: Book[]): void {
   }
 }
 
-export function addStoredBook(book: Book): Book[] {
+export function addStoredBook(book: Book, targetUserId?: string): Book[] {
   if (!db) return []
-  const books = getStoredBooks()
+  const uid = targetUserId || activeUserId || 'default'
+  const books = getStoredBooks(uid)
   const exists = books.some(b => b.id === book.id)
   if (exists) {
-    return updateStoredBook(book)
+    return updateStoredBook(book, uid)
   }
-  const knownKeys = new Set(['id', 'title', 'author', 'year', 'genre', 'pages', 'rating', 'readingTime', 'dateRead', 'comment', 'coverUrl', 'libraryBookId', 'synopsis', 'isbn'])
+  const knownKeys = new Set(['id', 'title', 'author', 'year', 'genre', 'pages', 'rating', 'readingTime', 'dateRead', 'comment', 'coverUrl', 'libraryBookId', 'synopsis', 'isbn', 'userId', 'quotes'])
   const extra: Record<string, any> = {}
   for (const k of Object.keys(book)) {
     if (!knownKeys.has(k)) extra[k] = book[k]
@@ -333,8 +561,8 @@ export function addStoredBook(book: Book): Book[] {
 
   try {
     db.run(
-      `INSERT OR REPLACE INTO readings (id, title, author, year, genre, pages, rating, reading_time, date_read, comment, cover_url, library_book_id, synopsis, isbn, extra_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR REPLACE INTO readings (id, title, author, year, genre, pages, rating, reading_time, date_read, comment, cover_url, library_book_id, synopsis, isbn, extra_json, user_id, quotes_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         book.id,
         book.title || 'Sin título',
@@ -350,25 +578,28 @@ export function addStoredBook(book: Book): Book[] {
         book.libraryBookId || null,
         book.synopsis || null,
         book.isbn || null,
-        Object.keys(extra).length > 0 ? JSON.stringify(extra) : null
+        Object.keys(extra).length > 0 ? JSON.stringify(extra) : null,
+        uid,
+        book.quotes && book.quotes.length > 0 ? JSON.stringify(book.quotes) : null
       ]
     )
     flushToDisk()
-    return getStoredBooks()
+    return getStoredBooks(uid)
   } catch (err) {
     console.error(`[SQLite] Error in addStoredBook:`, err)
     return books
   }
 }
 
-export function updateStoredBook(book: Book): Book[] {
+export function updateStoredBook(book: Book, targetUserId?: string): Book[] {
   if (!db) return []
-  const books = getStoredBooks()
+  const uid = targetUserId || activeUserId || 'default'
+  const books = getStoredBooks(uid)
   const exists = books.some(b => b.id === book.id)
   if (!exists) {
-    return addStoredBook(book)
+    return addStoredBook(book, uid)
   }
-  const knownKeys = new Set(['id', 'title', 'author', 'year', 'genre', 'pages', 'rating', 'readingTime', 'dateRead', 'comment', 'coverUrl', 'libraryBookId', 'synopsis', 'isbn'])
+  const knownKeys = new Set(['id', 'title', 'author', 'year', 'genre', 'pages', 'rating', 'readingTime', 'dateRead', 'comment', 'coverUrl', 'libraryBookId', 'synopsis', 'isbn', 'userId', 'quotes'])
   const extra: Record<string, any> = {}
   for (const k of Object.keys(book)) {
     if (!knownKeys.has(k)) extra[k] = book[k]
@@ -378,8 +609,8 @@ export function updateStoredBook(book: Book): Book[] {
     db.run(
       `UPDATE readings SET
         title = ?, author = ?, year = ?, genre = ?, pages = ?, rating = ?,
-        reading_time = ?, date_read = ?, comment = ?, cover_url = ?, library_book_id = ?, synopsis = ?, isbn = ?, extra_json = ?
-       WHERE id = ?`,
+        reading_time = ?, date_read = ?, comment = ?, cover_url = ?, library_book_id = ?, synopsis = ?, isbn = ?, extra_json = ?, quotes_json = ?
+       WHERE id = ? AND user_id = ?`,
       [
         book.title || 'Sin título',
         book.author || 'Autor desconocido',
@@ -395,26 +626,40 @@ export function updateStoredBook(book: Book): Book[] {
         book.synopsis || null,
         book.isbn || null,
         Object.keys(extra).length > 0 ? JSON.stringify(extra) : null,
-        book.id
+        book.quotes && book.quotes.length > 0 ? JSON.stringify(book.quotes) : null,
+        book.id,
+        uid
       ]
     )
     flushToDisk()
-    return getStoredBooks()
+    return getStoredBooks(uid)
   } catch (err) {
     console.error(`[SQLite] Error in updateStoredBook:`, err)
-    return getStoredBooks()
+    return getStoredBooks(uid)
   }
 }
 
-export function deleteStoredBook(id: string): Book[] {
+export function saveBookQuotes(bookId: string, quotes: any[], targetUserId?: string): Book[] {
   if (!db) return []
+  const uid = targetUserId || activeUserId || 'default'
+  const books = getStoredBooks(uid)
+  const target = books.find(b => b.id === bookId)
+  if (!target) return books
+
+  target.quotes = quotes
+  return updateStoredBook(target, uid)
+}
+
+export function deleteStoredBook(id: string, targetUserId?: string): Book[] {
+  if (!db) return []
+  const uid = targetUserId || activeUserId || 'default'
   try {
-    db.run(`DELETE FROM readings WHERE id = ?`, [id])
+    db.run(`DELETE FROM readings WHERE id = ? AND user_id = ?`, [id, uid])
     flushToDisk()
-    return getStoredBooks()
+    return getStoredBooks(uid)
   } catch (err) {
     console.error(`[SQLite] Error in deleteStoredBook:`, err)
-    return getStoredBooks()
+    return getStoredBooks(uid)
   }
 }
 
@@ -422,14 +667,17 @@ export function deleteStoredBook(id: string): Book[] {
 // LIBRARY (Biblioteca Digital) CRUD
 // ============================================================================
 
-export function getStoredLibrary(): LibraryBook[] {
+export function getStoredLibrary(targetUserId?: string): LibraryBook[] {
   if (!db) return []
+  const uid = targetUserId || activeUserId || 'default'
   try {
     const stmt = db.prepare(`
-      SELECT id, title, author, format, file_name, file_path, file_size, pages, cover_url, synopsis, date_added, status, sort_order, extra_json
+      SELECT id, title, author, format, file_name, file_path, file_size, pages, cover_url, synopsis, date_added, status, sort_order, extra_json, user_id
       FROM library_books
+      WHERE user_id = ?
       ORDER BY CASE WHEN sort_order IS NOT NULL THEN sort_order ELSE 999999999 END ASC, date_added DESC, id DESC
     `)
+    stmt.bind([uid])
     const library: LibraryBook[] = []
     while (stmt.step()) {
       const row = stmt.getAsObject() as any
@@ -451,6 +699,7 @@ export function getStoredLibrary(): LibraryBook[] {
         dateAdded: row.date_added || new Date().toISOString(),
         status: row.status || 'pending',
         sortOrder: row.sort_order !== null ? Number(row.sort_order) : undefined,
+        userId: row.user_id || uid,
         ...extra
       })
     }
@@ -462,19 +711,20 @@ export function getStoredLibrary(): LibraryBook[] {
   }
 }
 
-export function setStoredLibrary(books: LibraryBook[]): void {
+export function setStoredLibrary(books: LibraryBook[], targetUserId?: string): void {
   if (!db) return
+  const uid = targetUserId || activeUserId || 'default'
   try {
     db.run(`BEGIN TRANSACTION;`)
-    db.run(`DELETE FROM library_books;`)
+    db.run(`DELETE FROM library_books WHERE user_id = ?;`, [uid])
     const stmt = db.prepare(`
-      INSERT INTO library_books (id, title, author, format, file_name, file_path, file_size, pages, cover_url, synopsis, date_added, status, sort_order, extra_json)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO library_books (id, title, author, format, file_name, file_path, file_size, pages, cover_url, synopsis, date_added, status, sort_order, extra_json, user_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     for (let i = 0; i < books.length; i++) {
       const b = books[i]
-      const knownKeys = new Set(['id', 'title', 'author', 'format', 'fileName', 'filePath', 'fileSize', 'pages', 'coverUrl', 'synopsis', 'dateAdded', 'status', 'sortOrder'])
+      const knownKeys = new Set(['id', 'title', 'author', 'format', 'fileName', 'filePath', 'fileSize', 'pages', 'coverUrl', 'synopsis', 'dateAdded', 'status', 'sortOrder', 'userId'])
       const extra: Record<string, any> = {}
       for (const k of Object.keys(b)) {
         if (!knownKeys.has(k)) extra[k] = b[k]
@@ -487,13 +737,14 @@ export function setStoredLibrary(books: LibraryBook[]): void {
         b.fileName || '',
         b.filePath || '',
         b.fileSize || 0,
-        b.pages !== undefined ? b.pages : null,
+        b.pages !== undefined && b.pages !== null ? Number(b.pages) : null,
         b.coverUrl || null,
         b.synopsis || null,
         b.dateAdded || new Date().toISOString(),
         b.status || 'pending',
         b.sortOrder !== undefined ? b.sortOrder : i,
-        Object.keys(extra).length > 0 ? JSON.stringify(extra) : null
+        Object.keys(extra).length > 0 ? JSON.stringify(extra) : null,
+        uid
       ])
     }
     stmt.free()
@@ -505,9 +756,10 @@ export function setStoredLibrary(books: LibraryBook[]): void {
   }
 }
 
-export function addStoredLibraryBook(book: LibraryBook): LibraryBook {
+export function addStoredLibraryBook(book: LibraryBook, targetUserId?: string): LibraryBook {
   if (!db) return book
-  const knownKeys = new Set(['id', 'title', 'author', 'format', 'fileName', 'filePath', 'fileSize', 'pages', 'coverUrl', 'synopsis', 'dateAdded', 'status'])
+  const uid = targetUserId || activeUserId || 'default'
+  const knownKeys = new Set(['id', 'title', 'author', 'format', 'fileName', 'filePath', 'fileSize', 'pages', 'coverUrl', 'synopsis', 'dateAdded', 'status', 'sortOrder', 'userId'])
   const extra: Record<string, any> = {}
   for (const k of Object.keys(book)) {
     if (!knownKeys.has(k)) extra[k] = book[k]
@@ -515,8 +767,8 @@ export function addStoredLibraryBook(book: LibraryBook): LibraryBook {
 
   try {
     db.run(
-      `INSERT OR REPLACE INTO library_books (id, title, author, format, file_name, file_path, file_size, pages, cover_url, synopsis, date_added, status, extra_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR REPLACE INTO library_books (id, title, author, format, file_name, file_path, file_size, pages, cover_url, synopsis, date_added, status, extra_json, user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         book.id,
         book.title || 'Sin título',
@@ -525,12 +777,13 @@ export function addStoredLibraryBook(book: LibraryBook): LibraryBook {
         book.fileName || '',
         book.filePath || '',
         book.fileSize || 0,
-        book.pages !== undefined ? book.pages : null,
+        book.pages !== undefined && book.pages !== null ? Number(book.pages) : null,
         book.coverUrl || null,
         book.synopsis || null,
         book.dateAdded || new Date().toISOString(),
         book.status || 'pending',
-        Object.keys(extra).length > 0 ? JSON.stringify(extra) : null
+        Object.keys(extra).length > 0 ? JSON.stringify(extra) : null,
+        uid
       ]
     )
     flushToDisk()
@@ -541,25 +794,27 @@ export function addStoredLibraryBook(book: LibraryBook): LibraryBook {
   }
 }
 
-export function updateStoredLibraryBook(id: string, updates: Partial<LibraryBook>): LibraryBook[] {
+export function updateStoredLibraryBook(id: string, updates: Partial<LibraryBook>, targetUserId?: string): LibraryBook[] {
   if (!db) return []
-  const library = getStoredLibrary()
+  const uid = targetUserId || activeUserId || 'default'
+  const library = getStoredLibrary(uid)
   const target = library.find(b => b.id === id)
   if (!target) return library
 
   const merged = { ...target, ...updates }
-  addStoredLibraryBook(merged)
-  return getStoredLibrary()
+  addStoredLibraryBook(merged, uid)
+  return getStoredLibrary(uid)
 }
 
-export function deleteStoredLibraryBook(id: string): LibraryBook[] {
+export function deleteStoredLibraryBook(id: string, targetUserId?: string): LibraryBook[] {
   if (!db) return []
+  const uid = targetUserId || activeUserId || 'default'
   try {
-    db.run(`DELETE FROM library_books WHERE id = ?`, [id])
+    db.run(`DELETE FROM library_books WHERE id = ? AND user_id = ?`, [id, uid])
     flushToDisk()
-    return getStoredLibrary()
+    return getStoredLibrary(uid)
   } catch (err) {
     console.error(`[SQLite] Error in deleteStoredLibraryBook:`, err)
-    return getStoredLibrary()
+    return getStoredLibrary(uid)
   }
 }

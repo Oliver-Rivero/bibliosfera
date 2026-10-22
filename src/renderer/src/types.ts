@@ -13,6 +13,17 @@ export interface Book {
   comment?: string;
   dateRead?: string; // ISO String
   libraryBookId?: string;
+  userId?: string;
+  quotes?: BookQuote[];
+}
+
+export interface BookQuote {
+  id: string;
+  text: string;
+  note?: string;
+  page?: string;
+  dateAdded?: string;
+  source?: 'kindle' | 'kobo' | 'sony' | 'manual' | string;
 }
 
 export type BookFormat = 'epub' | 'pdf' | 'mobi' | 'azw3' | 'otro';
@@ -32,6 +43,19 @@ export interface LibraryBook {
   synopsis?: string;
   status: 'pending' | 'reading' | 'read';
   readingBookId?: string; // ID in readings if read
+  userId?: string;
+}
+
+export interface UserProfile {
+  id: string;
+  name: string;
+  avatar: string;
+  color: string;
+  themeName: 'clasico' | 'cactusito' | 'pergamino' | string;
+  colorMode: 'light' | 'dark';
+  viewMode: 'list' | 'shelf' | 'spines';
+  bio?: string;
+  createdAt?: string;
 }
 
 export interface RecommendedBook {

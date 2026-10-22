@@ -1,6 +1,6 @@
 {
   "name": "bibliosfera",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Bibliosfera — Gestor minimalista de lecturas y biblioteca digital",
   "main": "./out/main/index.js",
   "author": "Óliver Rivero",

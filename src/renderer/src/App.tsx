@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Book, LibraryBook, RecommendedBook } from './types'
+import { Book, LibraryBook, RecommendedBook, UserProfile } from './types'
 import { 
   BookOpen, 
   Library, 
@@ -15,7 +15,10 @@ import {
   BarChart3,
   List,
   Bookmark,
-  ArrowUpDown
+  ArrowUpDown,
+  ChevronDown,
+  UserPlus,
+  Check
 } from 'lucide-react'
 import AddBookModal from './components/AddBookModal'
 import BookDetailModal from './components/BookDetailModal'
@@ -42,6 +45,7 @@ export default function App() {
   const [editingBook, setEditingBook] = useState<Book | undefined>(undefined)
   const [detailBook, setDetailBook] = useState<Book | undefined>(undefined)
   const [showSettingsModal, setShowSettingsModal] = useState(false)
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'export_import' | 'themes' | 'device' | 'users'>('export_import')
   const [showStatsModal, setShowStatsModal] = useState(false)
   const [showRecommendationsModal, setShowRecommendationsModal] = useState(false)
   const [showWelcomeTour, setShowWelcomeTour] = useState(() => {
@@ -49,6 +53,11 @@ export default function App() {
   })
   const [libraryCount, setLibraryCount] = useState(0)
   const [libraryRefreshKey, setLibraryRefreshKey] = useState(0)
+
+  // Users state
+  const [users, setUsers] = useState<UserProfile[]>([])
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null)
+  const [showUserDropdown, setShowUserDropdown] = useState(false)
 
   // Light / Dark mode state
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -70,7 +79,22 @@ export default function App() {
   }, [theme])
 
   const toggleTheme = () => {
-    setTheme(prev => (prev === 'dark' ? 'light' : 'dark'))
+    const next = theme === 'dark' ? 'light' : 'dark'
+    setTheme(next)
+    if (currentUser?.id && typeof window.api?.updateUser === 'function') {
+      window.api.updateUser(currentUser.id, { colorMode: next }).then(res => {
+        if (res?.users) setUsers(res.users)
+      }).catch(() => {})
+    }
+  }
+
+  const handleSetReadingsViewMode = (mode: 'list' | 'shelf' | 'spines') => {
+    setReadingsViewMode(mode)
+    if (currentUser?.id && typeof window.api?.updateUser === 'function') {
+      window.api.updateUser(currentUser.id, { viewMode: mode }).then(res => {
+        if (res?.users) setUsers(res.users)
+      }).catch(() => {})
+    }
   }
 
   // Period filter state for reading stats modal
@@ -93,6 +117,60 @@ export default function App() {
     }
   }
 
+  const loadAllUsers = async () => {
+    try {
+      if (typeof window.api?.getUsers === 'function') {
+        const uList = await window.api.getUsers()
+        if (Array.isArray(uList)) setUsers(uList)
+      }
+      if (typeof window.api?.getActiveUser === 'function') {
+        const res = await window.api.getActiveUser()
+        if (res && res.activeUser) {
+          setCurrentUser(res.activeUser)
+          if (res.activeUser.themeName) {
+            const norm = res.activeUser.themeName === 'elegante' ? 'clasico' : res.activeUser.themeName === 'exlibris' ? 'pergamino' : res.activeUser.themeName
+            document.documentElement.setAttribute('data-theme', norm)
+            localStorage.setItem('bibliosfera_app_theme', norm)
+          }
+          if (res.activeUser.colorMode) {
+            setTheme(res.activeUser.colorMode)
+          }
+          if (res.activeUser.viewMode) {
+            setReadingsViewMode(res.activeUser.viewMode)
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Error cargando usuarios:', e)
+    }
+  }
+
+  const handleSwitchUser = async (userId: string) => {
+    try {
+      const res = await window.api.setActiveUser(userId)
+      if (res && res.success && res.activeUser) {
+        setCurrentUser(res.activeUser)
+        setBooks(res.books || [])
+        if (res.activeUser.themeName) {
+          const norm = res.activeUser.themeName === 'elegante' ? 'clasico' : res.activeUser.themeName === 'exlibris' ? 'pergamino' : res.activeUser.themeName
+          document.documentElement.setAttribute('data-theme', norm)
+          localStorage.setItem('bibliosfera_app_theme', norm)
+        }
+        if (res.activeUser.colorMode) {
+          setTheme(res.activeUser.colorMode)
+        }
+        if (res.activeUser.viewMode) {
+          setReadingsViewMode(res.activeUser.viewMode)
+        }
+        setLibraryRefreshKey(k => k + 1)
+        refreshLibraryCount()
+        setShowUserDropdown(false)
+      }
+    } catch (err) {
+      console.error('Error al cambiar de usuario:', err)
+    }
+  }
+
   useEffect(() => {
     const rawTheme = localStorage.getItem('bibliosfera_app_theme') || 'clasico'
     const savedAppTheme = rawTheme === 'elegante' ? 'clasico' : rawTheme === 'exlibris' ? 'pergamino' : rawTheme
@@ -108,6 +186,8 @@ export default function App() {
         }
       }).catch(() => {})
     }
+
+    loadAllUsers()
 
     window.api.getBooks().then(data => {
       if (data && data.length > 0) {
@@ -256,18 +336,49 @@ export default function App() {
     setShowModal(true)
   }
 
-  const LogoSVG = () => (
-    <img
-      src={theme === 'dark' ? logoDark : logoLight}
-      alt="Bibliosfera"
-      className={`h-10 sm:h-11 w-auto object-contain select-none transition-all duration-200 ${
-        theme === 'dark'
-          ? 'drop-shadow-[0_2px_6px_rgba(0,0,0,0.45)]'
-          : 'drop-shadow-[0_1px_3px_rgba(36,47,54,0.1)]'
-      }`}
-      draggable={false}
-    />
-  )
+  const LogoSVG = () => {
+    const [imgError, setImgError] = useState(false)
+
+    if (imgError) {
+      return (
+        <div className="flex items-center gap-2.5 select-none">
+          <svg viewBox="0 0 48 48" role="img" aria-label="Logo de Bibliosfera" className="w-9 h-9 shrink-0">
+            <rect width="48" height="48" rx="12" fill="var(--color-teal)" />
+            <rect x="9" y="22" width="8" height="17" rx="1.5" fill="var(--color-sky)" />
+            <rect x="20" y="14" width="8" height="25" rx="1.5" fill="var(--color-cream)" />
+            <rect x="31" y="8" width="8" height="31" rx="1.5" fill="var(--color-green)" stroke="var(--color-sky)" strokeWidth="1.5" />
+            <path d="M11 27h4M22 19h4M33 13h4" stroke="var(--color-teal)" strokeWidth="1.5" strokeLinecap="round" />
+            <path d="M7 42h34" stroke="var(--color-brown)" strokeWidth="2.5" strokeLinecap="round" />
+          </svg>
+          <span className="font-bold text-[22px] tracking-tight font-['Bricolage_Grotesque'] text-[var(--color-ink)]">
+            bibliosfera
+          </span>
+        </div>
+      )
+    }
+
+    return (
+      <img
+        src={theme === 'dark' ? logoDark : logoLight}
+        alt="Bibliosfera"
+        onError={(e) => {
+          const target = e.currentTarget
+          const fallbackUrl = theme === 'dark' ? '/logo-dark.png' : '/logo-light.png'
+          if (!target.src.endsWith(fallbackUrl)) {
+            target.src = fallbackUrl
+          } else {
+            setImgError(true)
+          }
+        }}
+        className={`h-10 sm:h-11 w-auto object-contain select-none transition-all duration-200 ${
+          theme === 'dark'
+            ? 'drop-shadow-[0_2px_6px_rgba(0,0,0,0.45)]'
+            : 'drop-shadow-[0_1px_3px_rgba(36,47,54,0.1)]'
+        }`}
+        draggable={false}
+      />
+    )
+  }
 
   const formatter = new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'short', year: 'numeric' })
 
@@ -320,6 +431,101 @@ export default function App() {
 
         {/* Right Action Bar */}
         <div className="flex items-center gap-2 sm:gap-2.5">
+          {/* User Profile Selector Pill (only visible when there are multiple users) */}
+          {users.length > 1 && (
+            <div className="relative">
+              <button
+                onClick={() => setShowUserDropdown(prev => !prev)}
+                className="py-[7px] pl-2.5 pr-3 rounded-full border border-[var(--color-line)] bg-[var(--color-surface)] text-[var(--color-ink)] hover:bg-[var(--color-bg)] font-bold text-[12.5px] flex items-center gap-2 transition-all cursor-pointer shadow-xs"
+                title={`Perfil activo: ${currentUser?.name || 'Mi Biblioteca'}`}
+              >
+                <span
+                  className="w-5.5 h-5.5 rounded-full flex items-center justify-center text-[12px] shrink-0 select-none shadow-2xs"
+                  style={{
+                    backgroundColor: `${currentUser?.color || '#285666'}25`,
+                    border: `1.5px solid ${currentUser?.color || '#285666'}`
+                  }}
+                >
+                  {currentUser?.avatar || '📚'}
+                </span>
+                <span className="max-w-[110px] truncate">{currentUser?.name || 'Mi Biblioteca'}</span>
+                <ChevronDown className={`w-3.5 h-3.5 text-[var(--color-muted)] transition-transform duration-200 ${showUserDropdown ? 'rotate-180' : ''}`} />
+              </button>
+
+              {/* Dropdown Menu */}
+              {showUserDropdown && (
+                <>
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setShowUserDropdown(false)}
+                  />
+                  <div className="absolute right-0 top-full mt-2 w-72 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] shadow-2xl p-2 z-50 flex flex-col gap-1 text-[13px] animate-in fade-in zoom-in-95 duration-100">
+                    <div className="px-3 py-2 flex items-center justify-between border-b border-[var(--color-line)]">
+                      <span className="font-bold text-[11px] uppercase tracking-wider text-[var(--color-muted)]">
+                        Perfiles de biblioteca
+                      </span>
+                      <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-[var(--color-chip)] text-[var(--color-ink)]">
+                        {users.length} {users.length === 1 ? 'usuario' : 'usuarios'}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col gap-1 max-h-60 overflow-y-auto py-1">
+                      {users.map(u => {
+                        const isSel = (currentUser?.id || 'default') === u.id
+                        return (
+                          <button
+                            key={u.id}
+                            onClick={() => handleSwitchUser(u.id)}
+                            className={`w-full p-2 rounded-xl flex items-center justify-between gap-3 text-left transition-all cursor-pointer ${
+                              isSel
+                                ? 'bg-[var(--color-accent)] text-[var(--color-on-accent)] font-bold shadow-xs'
+                                : 'hover:bg-[var(--color-bg)] text-[var(--color-ink)]'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <span
+                                className="w-7 h-7 rounded-xl flex items-center justify-center text-[15px] shrink-0"
+                                style={{
+                                  backgroundColor: isSel ? 'rgba(255,255,255,0.2)' : `${u.color || '#285666'}25`,
+                                  border: isSel ? '1px solid rgba(255,255,255,0.4)' : `1.5px solid ${u.color || '#285666'}`
+                                }}
+                              >
+                                {u.avatar || '📚'}
+                              </span>
+                              <div className="flex flex-col min-w-0">
+                                <span className="truncate leading-tight">{u.name}</span>
+                                {u.bio && (
+                                  <span className={`text-[10.5px] truncate ${isSel ? 'text-white/80' : 'text-[var(--color-muted)]'}`}>
+                                    {u.bio}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            {isSel && <Check className="w-4 h-4 stroke-[2.5] shrink-0" />}
+                          </button>
+                        )
+                      })}
+                    </div>
+
+                    <div className="pt-1.5 border-t border-[var(--color-line)] flex flex-col gap-1">
+                      <button
+                        onClick={() => {
+                          setShowUserDropdown(false)
+                          setSettingsInitialTab('users')
+                          setShowSettingsModal(true)
+                        }}
+                        className="w-full py-2 px-3 rounded-xl flex items-center gap-2 text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-bg)] transition-colors cursor-pointer"
+                      >
+                        <UserPlus className="w-3.5 h-3.5" />
+                        <span>+ Gestionar / Añadir usuario</span>
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           {/* Light / Dark Mode Toggle */}
           <button
             onClick={toggleTheme}
@@ -363,7 +569,10 @@ export default function App() {
 
           {/* Settings Button (A la derecha, sólo icono) */}
           <button
-            onClick={() => setShowSettingsModal(true)}
+            onClick={() => {
+              setSettingsInitialTab('export_import')
+              setShowSettingsModal(true)
+            }}
             className="w-[38px] h-[38px] rounded-full border border-[var(--color-line)] bg-[var(--color-surface)] text-[var(--color-ink)] hover:bg-[var(--color-bg)] transition-colors cursor-pointer shadow-xs flex items-center justify-center shrink-0"
             title="Ajustes"
             aria-label="Ajustes"
@@ -519,7 +728,7 @@ export default function App() {
           {/* View Mode Toggle: Lista (predeterminada) | Estantería | Lomos */}
           <div className="flex gap-1 p-0.5 bg-[var(--color-surface)] border border-[var(--color-line)] rounded-full shadow-xs">
             <button
-              onClick={() => setReadingsViewMode('list')}
+              onClick={() => handleSetReadingsViewMode('list')}
               className={`px-3.5 py-1.5 rounded-full text-[12.5px] font-medium transition-all cursor-pointer flex items-center gap-1.5 ${
                 readingsViewMode === 'list'
                   ? 'bg-[var(--color-accent)] text-[var(--color-on-accent)] font-bold shadow-xs'
@@ -531,7 +740,7 @@ export default function App() {
               <span>Lista</span>
             </button>
             <button
-              onClick={() => setReadingsViewMode('shelf')}
+              onClick={() => handleSetReadingsViewMode('shelf')}
               className={`px-3.5 py-1.5 rounded-full text-[12.5px] font-medium transition-all cursor-pointer flex items-center gap-1.5 ${
                 readingsViewMode === 'shelf'
                   ? 'bg-[var(--color-accent)] text-[var(--color-on-accent)] font-bold shadow-xs'
@@ -543,7 +752,7 @@ export default function App() {
               <span>Estantería</span>
             </button>
             <button
-              onClick={() => setReadingsViewMode('spines')}
+              onClick={() => handleSetReadingsViewMode('spines')}
               className={`px-3.5 py-1.5 rounded-full text-[12.5px] font-medium transition-all cursor-pointer flex items-center gap-1.5 ${
                 readingsViewMode === 'spines'
                   ? 'bg-[var(--color-accent)] text-[var(--color-on-accent)] font-bold shadow-xs'
@@ -1004,6 +1213,10 @@ export default function App() {
             setBooks(updated)
             setDetailBook(undefined)
           }}
+          onUpdateBook={(updatedBook) => {
+            setBooks(prev => prev.map(b => b.id === updatedBook.id ? updatedBook : b))
+            setDetailBook(updatedBook)
+          }}
         />
       )}
 
@@ -1038,11 +1251,16 @@ export default function App() {
         />
       )}
 
-      {/* Settings Modal (Export / Import / Temas / eReader) */}
+      {/* Settings Modal (Export / Import / Temas / eReader / Usuarios) */}
       <SettingsModal
         isOpen={showSettingsModal}
+        initialTab={settingsInitialTab}
+        currentUser={currentUser}
+        onSwitchUser={handleSwitchUser}
+        onUserListUpdated={loadAllUsers}
         onClose={() => {
           setShowSettingsModal(false)
+          setSettingsInitialTab('export_import')
           refreshLibraryCount()
         }}
         totalReadingsCount={books.length}

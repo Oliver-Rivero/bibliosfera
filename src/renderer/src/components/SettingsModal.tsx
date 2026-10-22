@@ -23,16 +23,38 @@ import {
   FileDown,
   Loader2,
   ExternalLink,
-  Wifi
+  Wifi,
+  Users,
+  UserPlus,
+  Trash2,
+  Edit2,
+  Check
 } from 'lucide-react'
+import { UserProfile } from '../types'
+
+const USER_AVATARS = ['📚', '☕', '🦊', '🦉', '✨', '🌿', '🚀', '🐱', '🖋️', '🎨', '🧭', '🎧', '🏰', '📖', '🧙', '👑']
+
+const USER_COLORS = [
+  { name: 'Petróleo', hex: '#285666' },
+  { name: 'Ciruela', hex: '#481C58' },
+  { name: 'Bosque', hex: '#1E3F32' },
+  { name: 'Latón', hex: '#C88A36' },
+  { name: 'Terracota', hex: '#C2410C' },
+  { name: 'Océano', hex: '#0284C7' },
+  { name: 'Lavanda', hex: '#7C3AED' },
+  { name: 'Rosa flor', hex: '#DB2777' }
+]
 
 interface SettingsModalProps {
   isOpen: boolean
   onClose: () => void
-  initialTab?: string
+  initialTab?: 'export_import' | 'export' | 'themes' | 'device' | 'users' | string
   selectedLibraryIds?: string[]
   totalReadingsCount: number
   totalLibraryCount: number
+  currentUser?: UserProfile | null
+  onSwitchUser?: (userId: string) => Promise<void>
+  onUserListUpdated?: () => void
   onReadingsUpdated?: () => void
   onLibraryUpdated?: () => void
   onUploadBook?: () => Promise<void>
@@ -44,19 +66,52 @@ interface SettingsModalProps {
 export default function SettingsModal({
   isOpen,
   onClose,
+  initialTab,
   selectedLibraryIds,
   totalReadingsCount,
   totalLibraryCount,
+  currentUser,
+  onSwitchUser,
+  onUserListUpdated,
   onReadingsUpdated,
   onLibraryUpdated,
   activeColorMode = 'light',
   onToggleColorMode,
   onOpenTour
 }: SettingsModalProps) {
-  const [activeSection, setActiveSection] = useState<'export_import' | 'themes' | 'device'>('export_import')
+  const [activeSection, setActiveSection] = useState<'export_import' | 'themes' | 'device' | 'users'>(() => {
+    if (initialTab === 'export') return 'export_import'
+    if (initialTab === 'themes' || initialTab === 'device' || initialTab === 'users' || initialTab === 'export_import') return initialTab
+    return 'export_import'
+  })
   const [exportSubTab, setExportSubTab] = useState<'library' | 'readings'>('library')
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null)
   const [busyAction, setBusyAction] = useState<string | null>(null)
+
+  // Users state
+  const [users, setUsers] = useState<UserProfile[]>([])
+  const [showUserModal, setShowUserModal] = useState(false)
+  const [editingUser, setEditingUser] = useState<UserProfile | null>(null)
+  const [deletingUser, setDeletingUser] = useState<UserProfile | null>(null)
+  const [userForm, setUserForm] = useState<{
+    name: string
+    avatar: string
+    color: string
+    themeName: 'clasico' | 'cactusito' | 'pergamino'
+    colorMode: 'light' | 'dark'
+    viewMode: 'list' | 'shelf' | 'spines'
+    bio: string
+    copyBooksFromUserId?: string
+  }>({
+    name: '',
+    avatar: '📚',
+    color: '#285666',
+    themeName: 'clasico',
+    colorMode: 'light',
+    viewMode: 'list',
+    bio: '',
+    copyBooksFromUserId: ''
+  })
 
   // Library Storage Folder state
   const [storageInfo, setStorageInfo] = useState<{
@@ -133,13 +188,141 @@ export default function SettingsModal({
     }
   }
 
+  const loadUsers = async () => {
+    try {
+      if (typeof window.api?.getUsers === 'function') {
+        const u = await window.api.getUsers()
+        if (Array.isArray(u)) {
+          setUsers(u)
+        }
+      }
+    } catch (e) {
+      console.error('Error cargando usuarios:', e)
+    }
+  }
+
+  const handleOpenAddUser = () => {
+    setEditingUser(null)
+    setUserForm({
+      name: '',
+      avatar: '📚',
+      color: '#285666',
+      themeName: 'clasico',
+      colorMode: 'light',
+      viewMode: 'list',
+      bio: '',
+      copyBooksFromUserId: ''
+    })
+    setShowUserModal(true)
+  }
+
+  const handleOpenEditUser = (u: UserProfile) => {
+    setEditingUser(u)
+    setUserForm({
+      name: u.name,
+      avatar: u.avatar || '📚',
+      color: u.color || '#285666',
+      themeName: (u.themeName as any) || 'clasico',
+      colorMode: u.colorMode || 'light',
+      viewMode: u.viewMode || 'list',
+      bio: u.bio || '',
+      copyBooksFromUserId: ''
+    })
+    setShowUserModal(true)
+  }
+
+  const handleSaveUser = async () => {
+    if (!userForm.name.trim()) {
+      setStatusMsg({ type: 'error', text: 'El nombre de usuario no puede estar vacío.' })
+      return
+    }
+    setBusyAction('save-user')
+    try {
+      if (editingUser) {
+        const res = await window.api.updateUser(editingUser.id, {
+          name: userForm.name.trim(),
+          avatar: userForm.avatar,
+          color: userForm.color,
+          themeName: userForm.themeName,
+          colorMode: userForm.colorMode,
+          viewMode: userForm.viewMode,
+          bio: userForm.bio.trim()
+        })
+        if (res && res.users) {
+          setUsers(res.users)
+          if (currentUser?.id === editingUser.id && onSwitchUser) {
+            await onSwitchUser(editingUser.id)
+          }
+        }
+        setShowUserModal(false)
+        setStatusMsg({ type: 'success', text: `Perfil de "${userForm.name}" actualizado con éxito.` })
+      } else {
+        const res = await window.api.addUser({
+          name: userForm.name.trim(),
+          avatar: userForm.avatar,
+          color: userForm.color,
+          themeName: userForm.themeName,
+          colorMode: userForm.colorMode,
+          viewMode: userForm.viewMode,
+          bio: userForm.bio.trim()
+        }, {
+          copyBooksFromUserId: userForm.copyBooksFromUserId || undefined
+        })
+        if (res && res.users) {
+          setUsers(res.users)
+          if (res.user && onSwitchUser) {
+            await onSwitchUser(res.user.id)
+          }
+        }
+        setShowUserModal(false)
+        setStatusMsg({ type: 'success', text: `Nuevo perfil "${userForm.name}" añadido a la biblioteca.` })
+      }
+      if (onUserListUpdated) onUserListUpdated()
+    } catch (err: any) {
+      setStatusMsg({ type: 'error', text: err?.message || 'Error guardando usuario.' })
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const handleDeleteUser = async (u: UserProfile) => {
+    if (users.length <= 1) {
+      setStatusMsg({ type: 'error', text: 'No puedes eliminar el único perfil de usuario existente.' })
+      setDeletingUser(null)
+      return
+    }
+    setBusyAction('delete-user')
+    try {
+      const res = await window.api.deleteUser(u.id)
+      if (res && res.success) {
+        setUsers(res.users)
+        if (res.newActiveUserId && onSwitchUser) {
+          await onSwitchUser(res.newActiveUserId)
+        }
+        setStatusMsg({ type: 'success', text: `El perfil "${u.name}" ha sido eliminado.` })
+      } else {
+        setStatusMsg({ type: 'error', text: res?.message || 'No se pudo eliminar el usuario.' })
+      }
+      if (onUserListUpdated) onUserListUpdated()
+    } catch (err: any) {
+      setStatusMsg({ type: 'error', text: err?.message || 'Error eliminando usuario.' })
+    } finally {
+      setBusyAction(null)
+      setDeletingUser(null)
+    }
+  }
+
   useEffect(() => {
     if (isOpen) {
+      if (initialTab) {
+        setActiveSection(initialTab === 'export' ? 'export_import' : (initialTab as any))
+      }
       setStatusMsg(null)
       loadStorageInfo()
       checkDevice()
+      loadUsers()
     }
-  }, [isOpen])
+  }, [isOpen, initialTab])
 
   if (!isOpen) return null
 
@@ -280,6 +463,10 @@ export default function SettingsModal({
       if (typeof window.api?.setAppTheme === 'function') {
         await window.api.setAppTheme(themeKey)
       }
+      if (currentUser?.id && typeof window.api?.updateUser === 'function') {
+        await window.api.updateUser(currentUser.id, { themeName: themeKey })
+        if (onUserListUpdated) onUserListUpdated()
+      }
     } catch {
       // ignore
     }
@@ -396,6 +583,24 @@ export default function SettingsModal({
             {connectedDevice?.connected && (
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             )}
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveSection('users')
+              setStatusMsg(null)
+            }}
+            className={`px-4 py-2.5 text-[13px] font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${
+              activeSection === 'users'
+                ? 'border-[var(--color-accent)] text-[var(--color-ink)]'
+                : 'border-transparent text-[var(--color-muted)] hover:text-[var(--color-ink)]'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>Usuarios</span>
+            <span className="text-[11px] px-1.5 py-0.2 rounded-full bg-[var(--color-chip)] text-[var(--color-ink)] font-bold">
+              {users.length}
+            </span>
           </button>
         </div>
 
@@ -1166,13 +1371,433 @@ export default function SettingsModal({
               </div>
             </div>
           )}
+
+          {/* =========================================================
+              TAB 4: USUARIOS Y BIBLIOTECAS PERSONALIZADAS
+             ========================================================= */}
+          {activeSection === 'users' && (
+            <div className="flex flex-col gap-6">
+              {/* Header bar */}
+              <div className="flex items-start justify-between gap-4 flex-wrap pb-3 border-b border-[var(--color-line)]">
+                <div>
+                  <h3 className="font-bold text-[16px] text-[var(--color-ink)] flex items-center gap-2">
+                    <Users className="w-5 h-5 text-[var(--color-accent)]" />
+                    <span>Gestión de usuarios y bibliotecas</span>
+                  </h3>
+                  <p className="text-[12.5px] text-[var(--color-muted)] mt-1 max-w-xl leading-relaxed">
+                    Añade perfiles para otros lectores del hogar o crea espacios temáticos separados. Cada usuario dispone de su propia colección de libros, historial de lecturas, valoraciones y configuración visual individual.
+                  </p>
+                </div>
+                <button
+                  onClick={handleOpenAddUser}
+                  className="py-2.5 px-4 rounded-xl bg-[var(--color-accent)] text-[var(--color-on-accent)] font-bold text-[13px] flex items-center gap-2 hover:opacity-90 transition-opacity cursor-pointer shadow-xs shrink-0"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span>Añadir nuevo usuario</span>
+                </button>
+              </div>
+
+              {/* Users Cards Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {users.map(u => {
+                  const isActive = (currentUser?.id || 'default') === u.id
+                  return (
+                    <div
+                      key={u.id}
+                      className={`p-4 rounded-2xl border-2 transition-all flex flex-col justify-between gap-4 ${
+                        isActive
+                          ? 'border-[var(--color-accent)] bg-[var(--color-bg)]/60 shadow-sm'
+                          : 'border-[var(--color-line)] bg-[var(--color-surface)] hover:border-[var(--color-accent)]/50'
+                      }`}
+                    >
+                      <div className="flex items-start gap-3.5">
+                        <div
+                          className="w-13 h-13 rounded-2xl flex items-center justify-center text-3xl shrink-0 shadow-2xs select-none"
+                          style={{
+                            backgroundColor: `${u.color || '#285666'}20`,
+                            border: `2px solid ${u.color || '#285666'}`
+                          }}
+                        >
+                          {u.avatar || '📚'}
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="font-bold text-[15.5px] text-[var(--color-ink)] truncate">{u.name}</h4>
+                            {isActive && (
+                              <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 flex items-center gap-1">
+                                <Check className="w-3 h-3 stroke-[2.5]" />
+                                Activo
+                              </span>
+                            )}
+                          </div>
+
+                          {u.bio && (
+                            <p className="text-[12px] text-[var(--color-muted)] mt-1 italic line-clamp-2">
+                              «{u.bio}»
+                            </p>
+                          )}
+
+                          {/* Preference badges */}
+                          <div className="flex items-center gap-1.5 flex-wrap mt-2.5">
+                            <span className="text-[11px] px-2 py-0.5 rounded-md bg-[var(--color-bg)] border border-[var(--color-line)] text-[var(--color-ink)] capitalize font-medium">
+                              🎨 Tema {u.themeName === 'cactusito' ? 'Cactusito' : u.themeName === 'pergamino' ? 'Pergamino' : 'Clásico'}
+                            </span>
+                            <span className="text-[11px] px-2 py-0.5 rounded-md bg-[var(--color-bg)] border border-[var(--color-line)] text-[var(--color-ink)] capitalize font-medium">
+                              {u.colorMode === 'dark' ? '🌙 Oscuro' : '☀️ Claro'}
+                            </span>
+                            <span className="text-[11px] px-2 py-0.5 rounded-md bg-[var(--color-bg)] border border-[var(--color-line)] text-[var(--color-ink)] font-medium">
+                              📖 {u.viewMode === 'shelf' ? 'Estantería 3D' : u.viewMode === 'spines' ? 'Lomos' : 'Lista'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Card Action Buttons */}
+                      <div className="flex items-center justify-between gap-2 pt-3 border-t border-[var(--color-line)]/60">
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => handleOpenEditUser(u)}
+                            className="py-1.5 px-3 rounded-xl border border-[var(--color-line)] bg-[var(--color-bg)]/50 hover:bg-[var(--color-bg)] text-[var(--color-ink)] text-[12px] font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
+                            title="Editar perfil"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                            <span>Editar</span>
+                          </button>
+
+                          {users.length > 1 && (
+                            <button
+                              onClick={() => setDeletingUser(u)}
+                              className="p-1.5 rounded-xl border border-red-500/25 bg-red-500/5 hover:bg-red-500/15 text-red-600 dark:text-red-400 transition-colors cursor-pointer"
+                              title="Eliminar usuario"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        {!isActive ? (
+                          <button
+                            onClick={async () => {
+                              if (onSwitchUser) await onSwitchUser(u.id)
+                            }}
+                            className="py-1.5 px-3.5 rounded-xl bg-[var(--color-accent)] text-[var(--color-on-accent)] text-[12px] font-bold hover:opacity-90 transition-opacity flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                          >
+                            <span>Activar perfil</span>
+                          </button>
+                        ) : (
+                          <span className="text-[11.5px] font-bold text-[var(--color-muted)] px-2">
+                            Biblioteca seleccionada
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
         </div>
+
+        {/* Modal: Crear / Editar Usuario */}
+        {showUserModal && (
+          <div className="fixed inset-0 z-60 bg-black/55 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-2xl shadow-2xl max-w-lg w-full p-6 flex flex-col gap-5 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between pb-2 border-b border-[var(--color-line)]">
+                <h3 className="font-bold text-[16.5px] text-[var(--color-ink)] flex items-center gap-2">
+                  <Users className="w-5 h-5 text-[var(--color-accent)]" />
+                  <span>{editingUser ? 'Editar perfil de lector' : 'Añadir nuevo perfil a la biblioteca'}</span>
+                </h3>
+                <button
+                  onClick={() => setShowUserModal(false)}
+                  className="p-1.5 rounded-full hover:bg-[var(--color-bg)] text-[var(--color-muted)] hover:text-[var(--color-ink)] transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Field: Nombre */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[12.5px] font-bold text-[var(--color-ink)]">
+                  Nombre o apodo del lector <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={userForm.name}
+                  onChange={e => setUserForm(p => ({ ...p, name: e.target.value }))}
+                  placeholder="Ej. Sofía, Carlos, Club de lectura..."
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--color-line)] bg-[var(--color-bg)]/40 text-[13.5px] text-[var(--color-ink)] focus:outline-none focus:border-[var(--color-accent)]"
+                  autoFocus
+                />
+              </div>
+
+              {/* Field: Avatar Picker */}
+              <div className="flex flex-col gap-2">
+                <label className="text-[12.5px] font-bold text-[var(--color-ink)]">
+                  Avatar del perfil
+                </label>
+                <div className="grid grid-cols-8 gap-2">
+                  {USER_AVATARS.map(emoji => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      onClick={() => setUserForm(p => ({ ...p, avatar: emoji }))}
+                      className={`h-10 rounded-xl flex items-center justify-center text-xl transition-all cursor-pointer ${
+                        userForm.avatar === emoji
+                          ? 'border-2 border-[var(--color-accent)] bg-[var(--color-bg)] shadow-xs scale-105'
+                          : 'border border-[var(--color-line)] bg-[var(--color-bg)]/30 hover:bg-[var(--color-bg)]'
+                      }`}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-[11.5px] text-[var(--color-muted)]">O escribe un emoji personalizado:</span>
+                  <input
+                    type="text"
+                    maxLength={4}
+                    value={userForm.avatar}
+                    onChange={e => setUserForm(p => ({ ...p, avatar: e.target.value }))}
+                    className="w-12 text-center py-1 rounded-lg border border-[var(--color-line)] bg-[var(--color-bg)]/40 text-[14px]"
+                  />
+                </div>
+              </div>
+
+              {/* Field: Color Accent Picker */}
+              <div className="flex flex-col gap-2">
+                <label className="text-[12.5px] font-bold text-[var(--color-ink)]">
+                  Color identificativo
+                </label>
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  {USER_COLORS.map(c => (
+                    <button
+                      key={c.hex}
+                      type="button"
+                      onClick={() => setUserForm(p => ({ ...p, color: c.hex }))}
+                      className="w-8 h-8 rounded-full flex items-center justify-center transition-transform hover:scale-110 cursor-pointer shadow-xs relative"
+                      style={{ backgroundColor: c.hex }}
+                      title={c.name}
+                    >
+                      {userForm.color === c.hex && (
+                        <Check className="w-4 h-4 text-white stroke-[3] drop-shadow-xs" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Field: Preferred Theme */}
+              <div className="flex flex-col gap-2">
+                <label className="text-[12.5px] font-bold text-[var(--color-ink)]">
+                  Tema visual inicial
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'clasico', name: 'Clásico', desc: 'Papel & Petróleo' },
+                    { id: 'cactusito', name: 'Cactusito', desc: 'Menta & Ciruela' },
+                    { id: 'pergamino', name: 'Pergamino', desc: 'Lino & Biblioteca' }
+                  ].map(t => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setUserForm(p => ({ ...p, themeName: t.id as any }))}
+                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                        userForm.themeName === t.id
+                          ? 'border-[var(--color-accent)] bg-[var(--color-bg)] shadow-xs font-bold'
+                          : 'border-[var(--color-line)] bg-[var(--color-bg)]/20 hover:bg-[var(--color-bg)]/60'
+                      }`}
+                    >
+                      <div className="text-[12.5px] font-bold text-[var(--color-ink)]">{t.name}</div>
+                      <div className="text-[10.5px] text-[var(--color-muted)]">{t.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Field: Color Mode & View Mode in a 2-column row */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[12px] font-bold text-[var(--color-ink)]">
+                    Modo de color
+                  </label>
+                  <div className="flex rounded-xl border border-[var(--color-line)] p-1 bg-[var(--color-bg)]/30">
+                    <button
+                      type="button"
+                      onClick={() => setUserForm(p => ({ ...p, colorMode: 'light' }))}
+                      className={`flex-1 py-1.5 rounded-lg text-[12px] font-bold transition-all cursor-pointer ${
+                        userForm.colorMode === 'light'
+                          ? 'bg-[var(--color-accent)] text-[var(--color-on-accent)] shadow-xs'
+                          : 'text-[var(--color-muted)] hover:text-[var(--color-ink)]'
+                      }`}
+                    >
+                      ☀️ Claro
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setUserForm(p => ({ ...p, colorMode: 'dark' }))}
+                      className={`flex-1 py-1.5 rounded-lg text-[12px] font-bold transition-all cursor-pointer ${
+                        userForm.colorMode === 'dark'
+                          ? 'bg-[var(--color-accent)] text-[var(--color-on-accent)] shadow-xs'
+                          : 'text-[var(--color-muted)] hover:text-[var(--color-ink)]'
+                      }`}
+                    >
+                      🌙 Oscuro
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[12px] font-bold text-[var(--color-ink)]">
+                    Vista predeterminada
+                  </label>
+                  <select
+                    value={userForm.viewMode}
+                    onChange={e => setUserForm(p => ({ ...p, viewMode: e.target.value as any }))}
+                    className="w-full px-3 py-2 rounded-xl border border-[var(--color-line)] bg-[var(--color-bg)]/40 text-[12.5px] text-[var(--color-ink)] font-medium focus:outline-none focus:border-[var(--color-accent)]"
+                  >
+                    <option value="list">Lista densa</option>
+                    <option value="shelf">Estantería 3D</option>
+                    <option value="spines">Lomos de libros</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Field: Bio / Meta de lectura */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[12.5px] font-bold text-[var(--color-ink)]">
+                  Lema o meta de lectura anual (opcional)
+                </label>
+                <input
+                  type="text"
+                  value={userForm.bio}
+                  onChange={e => setUserForm(p => ({ ...p, bio: e.target.value }))}
+                  placeholder="Ej. Meta 2026: 25 libros leídos"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--color-line)] bg-[var(--color-bg)]/40 text-[13px] text-[var(--color-ink)] focus:outline-none focus:border-[var(--color-accent)]"
+                />
+              </div>
+
+              {/* Field: Copiar biblioteca (solo al crear nuevo usuario) */}
+              {!editingUser && users.length > 0 && (
+                <div className="flex flex-col gap-1.5 p-3 rounded-xl border border-[var(--color-line)] bg-[var(--color-bg)]/25">
+                  <label className="text-[12px] font-bold text-[var(--color-ink)]">
+                    Inicialización de la biblioteca
+                  </label>
+                  <div className="flex flex-col gap-2 mt-1">
+                    <label className="flex items-center gap-2 text-[12.5px] text-[var(--color-ink)] cursor-pointer">
+                      <input
+                        type="radio"
+                        name="copySource"
+                        checked={!userForm.copyBooksFromUserId}
+                        onChange={() => setUserForm(p => ({ ...p, copyBooksFromUserId: '' }))}
+                        className="accent-[var(--color-accent)]"
+                      />
+                      <span>Comenzar con biblioteca limpia y vacía (0 libros)</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 text-[12.5px] text-[var(--color-ink)] cursor-pointer">
+                      <input
+                        type="radio"
+                        name="copySource"
+                        checked={Boolean(userForm.copyBooksFromUserId)}
+                        onChange={() => setUserForm(p => ({ ...p, copyBooksFromUserId: users[0]?.id || '' }))}
+                        className="accent-[var(--color-accent)]"
+                      />
+                      <span>Copiar catálogo de libros de otro usuario</span>
+                    </label>
+
+                    {Boolean(userForm.copyBooksFromUserId) && (
+                      <select
+                        value={userForm.copyBooksFromUserId}
+                        onChange={e => setUserForm(p => ({ ...p, copyBooksFromUserId: e.target.value }))}
+                        className="mt-1 w-full px-3 py-2 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] text-[12px] text-[var(--color-ink)] font-semibold"
+                      >
+                        {users.map(srcU => (
+                          <option key={srcU.id} value={srcU.id}>
+                            {srcU.avatar} {srcU.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Modal Actions */}
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[var(--color-line)]">
+                <button
+                  type="button"
+                  onClick={() => setShowUserModal(false)}
+                  className="py-2 px-4 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] hover:bg-[var(--color-bg)] text-[13px] font-bold text-[var(--color-ink)] cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveUser}
+                  disabled={busyAction !== null}
+                  className="py-2 px-5 rounded-xl bg-[var(--color-accent)] text-[var(--color-on-accent)] text-[13px] font-bold hover:opacity-90 transition-opacity flex items-center gap-2 cursor-pointer shadow-xs disabled:opacity-50"
+                >
+                  {busyAction === 'save-user' ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Check className="w-4 h-4 stroke-[2.5]" />
+                  )}
+                  <span>{editingUser ? 'Guardar cambios' : 'Crear perfil'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal: Confirmación de Eliminación */}
+        {deletingUser && (
+          <div className="fixed inset-0 z-65 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-[var(--color-surface)] border border-red-500/30 rounded-2xl shadow-2xl max-w-md w-full p-6 flex flex-col gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/30 flex items-center justify-center text-red-600 dark:text-red-400">
+                <Trash2 className="w-6 h-6" />
+              </div>
+
+              <div>
+                <h4 className="font-bold text-[16px] text-[var(--color-ink)]">
+                  ¿Eliminar perfil de «{deletingUser.name}»?
+                </h4>
+                <p className="text-[12.5px] text-[var(--color-muted)] mt-1.5 leading-relaxed">
+                  Esta acción eliminará de forma permanente el perfil y toda su biblioteca digital, valoraciones y notas asociadas.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[var(--color-line)]">
+                <button
+                  type="button"
+                  onClick={() => setDeletingUser(null)}
+                  className="py-2 px-4 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] hover:bg-[var(--color-bg)] text-[12.5px] font-bold text-[var(--color-ink)] cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteUser(deletingUser)}
+                  disabled={busyAction !== null}
+                  className="py-2 px-4 rounded-xl bg-red-600 text-white text-[12.5px] font-bold hover:bg-red-700 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+                >
+                  {busyAction === 'delete-user' ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-4 h-4" />
+                  )}
+                  <span>Eliminar permanentemente</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="px-6 py-3.5 border-t border-[var(--color-line)] bg-[var(--color-bg)]/40 flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-3">
             <span className="text-[12px] text-[var(--color-muted)]">
-              Bibliosfera • v1.0 • Desarrollada por Óliver Rivero © 2026
+              Bibliosfera • v1.1 • Desarrollada por Óliver Rivero © 2026
             </span>
             {onOpenTour && (
               <button

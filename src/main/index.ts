@@ -9,8 +9,22 @@ import {
   setStoredBooks as sqliteSetBooks,
   getStoredLibrary as sqliteGetLibrary,
   setStoredLibrary as sqliteSetLibrary,
-  flushToDisk
+  getActiveUserId,
+  setActiveUserId,
+  getStoredUsers,
+  getStoredUser,
+  addStoredUser,
+  updateStoredUser,
+  deleteStoredUser,
+  UserProfile,
+  flushToDisk,
+  saveBookQuotes as sqliteSaveBookQuotes
 } from './db'
+import {
+  scanDeviceForNotes,
+  parseNotesFile,
+  findMatchingQuotesForTitle
+} from './ereaderNotes'
 
 function getBooksFile() {
   const newPath = join(app.getPath('userData'), 'bibliosfera-books.json')
@@ -29,7 +43,7 @@ function getConfigFile() {
   return join(app.getPath('userData'), 'bibliosfera-config.json')
 }
 
-function getAppConfig(): { libraryStorageDir?: string; themeName?: string } {
+function getAppConfig(): { libraryStorageDir?: string; themeName?: string; activeUserId?: string } {
   try {
     const file = getConfigFile()
     if (fs.existsSync(file)) {
@@ -39,7 +53,7 @@ function getAppConfig(): { libraryStorageDir?: string; themeName?: string } {
   return {}
 }
 
-function setAppConfig(updates: { libraryStorageDir?: string; themeName?: string }) {
+function setAppConfig(updates: { libraryStorageDir?: string; themeName?: string; activeUserId?: string }) {
   try {
     const current = getAppConfig()
     const next = { ...current, ...updates }
@@ -155,19 +169,21 @@ function detectPagesFromFile(filePath: string, format?: string): string {
   return ''
 }
 
-function getStoredBooks(): any[] {
+function getStoredBooks(userId?: string): any[] {
   try {
-    const sqliteBooks = sqliteGetBooks()
+    const sqliteBooks = sqliteGetBooks(userId)
     if (Array.isArray(sqliteBooks) && sqliteBooks.length > 0) {
       return sqliteBooks
     }
     // Fallback to JSON if SQLite was just created and not yet populated
-    const file = getBooksFile()
-    if (fs.existsSync(file)) {
-      const books = JSON.parse(fs.readFileSync(file, 'utf-8'))
-      if (Array.isArray(books) && books.length > 0) {
-        sqliteSetBooks(books)
-        return books
+    if (!userId || userId === 'default') {
+      const file = getBooksFile()
+      if (fs.existsSync(file)) {
+        const books = JSON.parse(fs.readFileSync(file, 'utf-8'))
+        if (Array.isArray(books) && books.length > 0) {
+          sqliteSetBooks(books, 'default')
+          return books
+        }
       }
     }
     return sqliteBooks || []
@@ -177,13 +193,15 @@ function getStoredBooks(): any[] {
   }
 }
 
-function setStoredBooks(books: any[]) {
+function setStoredBooks(books: any[], userId?: string) {
   try {
-    sqliteSetBooks(books)
-    // Keep JSON file synced as an automatic backup
-    try {
-      fs.writeFileSync(getBooksFile(), JSON.stringify(books, null, 2))
-    } catch {}
+    sqliteSetBooks(books, userId)
+    // Keep JSON file synced as an automatic backup for default user
+    if (!userId || userId === 'default') {
+      try {
+        fs.writeFileSync(getBooksFile(), JSON.stringify(books, null, 2))
+      } catch {}
+    }
   } catch (e) {
     console.error('Error saving books:', e)
   }
@@ -202,19 +220,21 @@ function getLibraryFile() {
   return newPath
 }
 
-function getStoredLibrary(): any[] {
+function getStoredLibrary(userId?: string): any[] {
   try {
-    const sqliteLib = sqliteGetLibrary()
+    const sqliteLib = sqliteGetLibrary(userId)
     if (Array.isArray(sqliteLib) && sqliteLib.length > 0) {
       return sqliteLib
     }
     // Fallback to JSON if SQLite was just created
-    const file = getLibraryFile()
-    if (fs.existsSync(file)) {
-      const library = JSON.parse(fs.readFileSync(file, 'utf-8'))
-      if (Array.isArray(library) && library.length > 0) {
-        sqliteSetLibrary(library)
-        return library
+    if (!userId || userId === 'default') {
+      const file = getLibraryFile()
+      if (fs.existsSync(file)) {
+        const library = JSON.parse(fs.readFileSync(file, 'utf-8'))
+        if (Array.isArray(library) && library.length > 0) {
+          sqliteSetLibrary(library, 'default')
+          return library
+        }
       }
     }
     return sqliteLib || []
@@ -224,13 +244,15 @@ function getStoredLibrary(): any[] {
   }
 }
 
-function setStoredLibrary(books: any[]) {
+function setStoredLibrary(books: any[], userId?: string) {
   try {
-    sqliteSetLibrary(books)
-    // Keep JSON file synced as an automatic backup
-    try {
-      fs.writeFileSync(getLibraryFile(), JSON.stringify(books, null, 2))
-    } catch {}
+    sqliteSetLibrary(books, userId)
+    // Keep JSON file synced as an automatic backup for default user
+    if (!userId || userId === 'default') {
+      try {
+        fs.writeFileSync(getLibraryFile(), JSON.stringify(books, null, 2))
+      } catch {}
+    }
   } catch (e) {
     console.error('Error saving library:', e)
   }
@@ -382,7 +404,7 @@ function createSplashScreen(): BrowserWindow {
           <div class="progress-bar-container">
             <div class="progress-bar"></div>
           </div>
-          <p class="version-text">v1.0. Desarrollada por Óliver Rivero © 2026</p>
+          <p class="version-text">v1.1. Desarrollada por Óliver Rivero © 2026</p>
         </div>
       </div>
     </body>
@@ -471,6 +493,10 @@ app.whenReady().then(async () => {
 
   try {
     await initDatabase(app.getPath('userData'))
+    const cfg = getAppConfig()
+    if (cfg.activeUserId) {
+      setActiveUserId(cfg.activeUserId)
+    }
   } catch (err) {
     console.error('[SQLite] Error initializing database, falling back to JSON store:', err)
   }
@@ -485,19 +511,76 @@ app.whenReady().then(async () => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  // IPC Store handlers
-  ipcMain.handle('get-books', () => {
-    return getStoredBooks()
+  // Users IPC Handlers
+  ipcMain.handle('get-users', () => {
+    return getStoredUsers()
   })
 
-  ipcMain.handle('add-book', async (_, book) => {
-    const books = getStoredBooks()
+  ipcMain.handle('get-active-user', () => {
+    const activeId = getActiveUserId()
+    const users = getStoredUsers()
+    const user = users.find(u => u.id === activeId) || users[0] || null
+    return { activeUserId: activeId, activeUser: user }
+  })
+
+  ipcMain.handle('set-active-user', (_, userId: string) => {
+    setActiveUserId(userId)
+    setAppConfig({ activeUserId: userId })
+    const activeUser = getStoredUser(userId)
+    const books = getStoredBooks(userId)
+    const library = getStoredLibrary(userId)
+    return { success: true, activeUser, books, library }
+  })
+
+  ipcMain.handle('add-user', (_, userProfile: Partial<UserProfile>, options?: { copyBooksFromUserId?: string }) => {
+    const newUser = addStoredUser(userProfile)
+    if (options?.copyBooksFromUserId) {
+      const srcBooks = getStoredBooks(options.copyBooksFromUserId)
+      const srcLib = getStoredLibrary(options.copyBooksFromUserId)
+      const clonedBooks = srcBooks.map(b => ({
+        ...b,
+        id: `book_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        userId: newUser.id
+      }))
+      const clonedLib = srcLib.map(b => ({
+        ...b,
+        id: `lib_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        userId: newUser.id
+      }))
+      setStoredBooks(clonedBooks, newUser.id)
+      setStoredLibrary(clonedLib, newUser.id)
+    }
+    return { success: true, user: newUser, users: getStoredUsers() }
+  })
+
+  ipcMain.handle('update-user', (_, id: string, updates: Partial<UserProfile>) => {
+    const users = updateStoredUser(id, updates)
+    const user = getStoredUser(id)
+    return { success: true, user, users }
+  })
+
+  ipcMain.handle('delete-user', (_, id: string) => {
+    const result = deleteStoredUser(id)
+    if (result.success && result.newActiveUserId) {
+      setAppConfig({ activeUserId: result.newActiveUserId })
+    }
+    return result
+  })
+
+  // IPC Store handlers
+  ipcMain.handle('get-books', (_, userId?: string) => {
+    return getStoredBooks(userId)
+  })
+
+  ipcMain.handle('add-book', async (_, book, userId?: string) => {
+    const targetUid = userId || getActiveUserId()
+    const books = getStoredBooks(targetUid)
     if (book.coverUrl && (book.coverUrl.startsWith('http://') || book.coverUrl.startsWith('https://'))) {
       book.coverUrl = await downloadAndSaveCover(book.id, book.coverUrl)
     }
     // Enrich missing fields from library book if available (instant local lookup)
     if (book.libraryBookId) {
-      const library = getStoredLibrary()
+      const library = getStoredLibrary(targetUid)
       const libBook = library.find((lb: any) => lb.id === book.libraryBookId)
       if (libBook) {
         if (!book.pages && libBook.pages) book.pages = libBook.pages
@@ -513,12 +596,13 @@ app.whenReady().then(async () => {
     } else {
       books.push(book)
     }
-    setStoredBooks(books)
+    setStoredBooks(books, targetUid)
     return books
   })
 
-  ipcMain.handle('update-book', async (_, updatedBook) => {
-    const books = getStoredBooks()
+  ipcMain.handle('update-book', async (_, updatedBook, userId?: string) => {
+    const targetUid = userId || getActiveUserId()
+    const books = getStoredBooks(targetUid)
     const index = books.findIndex(b => b.id === updatedBook.id)
     if (updatedBook.coverUrl && (updatedBook.coverUrl.startsWith('http://') || updatedBook.coverUrl.startsWith('https://'))) {
       updatedBook.coverUrl = await downloadAndSaveCover(updatedBook.id, updatedBook.coverUrl)
@@ -528,7 +612,7 @@ app.whenReady().then(async () => {
     } else {
       books.push(updatedBook)
     }
-    setStoredBooks(books)
+    setStoredBooks(books, targetUid)
     return books
   })
 
@@ -558,7 +642,7 @@ app.whenReady().then(async () => {
     }
 
     const customHeaders = {
-      'User-Agent': 'Bibliosfera/1.0 (https://github.com/Oliver-Rivero/bibliosfera; contact@bibliosfera.app)'
+      'User-Agent': 'Bibliosfera/1.1 (https://github.com/Oliver-Rivero/bibliosfera; contact@bibliosfera.app)'
     }
 
     const cleanText = (text: string) => {
@@ -798,10 +882,11 @@ app.whenReady().then(async () => {
     return searchBookOnline(query)
   })
 
-  ipcMain.handle('delete-book', (_, id) => {
-    const books = getStoredBooks()
+  ipcMain.handle('delete-book', (_, id: string, userId?: string) => {
+    const targetUid = userId || getActiveUserId()
+    const books = getStoredBooks(targetUid)
     const filtered = books.filter(b => b.id !== id)
-    setStoredBooks(filtered)
+    setStoredBooks(filtered, targetUid)
     try {
       const coverFile = join(getCoversDir(), `${id}.jpg`)
       if (fs.existsSync(coverFile)) {
@@ -816,8 +901,8 @@ app.whenReady().then(async () => {
   // -------------------------------------------------------------
   // Digital Library (Calibre-style) IPC Handlers
   // -------------------------------------------------------------
-  ipcMain.handle('get-library-books', async () => {
-    const library = getStoredLibrary()
+  ipcMain.handle('get-library-books', async (_, userId?: string) => {
+    const library = getStoredLibrary(userId)
     return Array.isArray(library) ? library : []
   })
 
@@ -1026,7 +1111,8 @@ app.whenReady().then(async () => {
     const cfg = getAppConfig()
     const currentPath = getLibraryFilesDir()
     const defaultPath = getDefaultLibraryFilesDir()
-    const rawTheme = cfg.themeName || 'clasico'
+    const activeUser = getStoredUser(getActiveUserId())
+    const rawTheme = activeUser?.themeName || cfg.themeName || 'clasico'
     const normalizedTheme = rawTheme === 'elegante' ? 'clasico' : rawTheme === 'exlibris' ? 'pergamino' : rawTheme
     return {
       path: currentPath,
@@ -1129,6 +1215,10 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('set-app-theme', (_, themeName: string) => {
     setAppConfig({ themeName })
+    const activeId = getActiveUserId()
+    if (activeId) {
+      updateStoredUser(activeId, { themeName })
+    }
     return { success: true, themeName }
   })
 
@@ -1295,7 +1385,8 @@ app.whenReady().then(async () => {
           const lower = vol.toLowerCase()
 
           const isKindle = lower.includes('kindle')
-          const isKobo = lower.includes('kobo')
+          const isKobo = lower.includes('kobo') || fs.existsSync(join(fullVol, '.kobo'))
+          const isSony = lower.includes('sony') || lower.includes('prs') || fs.existsSync(join(fullVol, 'Sony_Reader')) || fs.existsSync(join(fullVol, 'database', 'books.db'))
           const isTolino = lower.includes('tolino')
           const isPocketBook = lower.includes('pocketbook') || lower.startsWith('pb')
           const isGenericReader = lower.includes('reader') || lower.includes('ereader') || lower.includes('ebook')
@@ -1304,21 +1395,34 @@ app.whenReady().then(async () => {
           const genericBooks = join(fullVol, 'books')
           const genericEbooks = join(fullVol, 'ebooks')
           const genericMyFiles = join(fullVol, 'my files', 'books')
+          const sonyMedia = join(fullVol, 'Sony_Reader', 'media', 'books')
+          const sonyBooks = join(fullVol, 'Sony_Reader', 'books')
 
           if (isKindle) {
             return {
               connected: true,
-              name: 'eReader / USB',
+              name: `Amazon Kindle (${vol})`,
               volumePath: fullVol,
               targetFolder: fs.existsSync(kindleDocs) ? kindleDocs : fullVol
             }
           }
-          if (isKobo || fs.existsSync(join(fullVol, '.kobo'))) {
+          if (isKobo) {
             return {
               connected: true,
-              name: 'eReader / USB',
+              name: `Kobo eReader (${vol})`,
               volumePath: fullVol,
               targetFolder: fs.existsSync(genericBooks) ? genericBooks : fullVol
+            }
+          }
+          if (isSony) {
+            const target = fs.existsSync(sonyMedia) ? sonyMedia :
+                           fs.existsSync(sonyBooks) ? sonyBooks :
+                           fs.existsSync(genericBooks) ? genericBooks : fullVol
+            return {
+              connected: true,
+              name: `Sony Reader (${vol})`,
+              volumePath: fullVol,
+              targetFolder: target
             }
           }
           if (isTolino) {
@@ -1362,14 +1466,16 @@ app.whenReady().then(async () => {
             if (!fs.existsSync(root)) continue
             const kindleDocs = join(root, 'documents')
             const koboFolder = join(root, '.kobo')
+            const isSony = fs.existsSync(join(root, 'Sony_Reader')) || fs.existsSync(join(root, 'database', 'books.db'))
             const genericBooks = join(root, 'books')
             const genericEbooks = join(root, 'ebooks')
             const genericMyFiles = join(root, 'my files', 'books')
+            const sonyMedia = join(root, 'Sony_Reader', 'media', 'books')
 
             if (fs.existsSync(kindleDocs)) {
               return {
                 connected: true,
-                name: `Kindle (${l}:)`,
+                name: `Amazon Kindle (${l}:)`,
                 volumePath: root,
                 targetFolder: kindleDocs
               }
@@ -1380,6 +1486,16 @@ app.whenReady().then(async () => {
                 name: `Kobo (${l}:)`,
                 volumePath: root,
                 targetFolder: fs.existsSync(genericBooks) ? genericBooks : root
+              }
+            }
+            if (isSony) {
+              const target = fs.existsSync(sonyMedia) ? sonyMedia :
+                             fs.existsSync(genericBooks) ? genericBooks : root
+              return {
+                connected: true,
+                name: `Sony Reader (${l}:)`,
+                volumePath: root,
+                targetFolder: target
               }
             }
             if (fs.existsSync(genericBooks) || fs.existsSync(genericEbooks) || fs.existsSync(genericMyFiles)) {
@@ -1488,6 +1604,122 @@ app.whenReady().then(async () => {
       count: copiedCount,
       message: `¡${copiedCount} ${copiedCount === 1 ? 'libro transferido' : 'libros transferidos'} con éxito a ${deviceLabel}!`
     }
+  })
+
+  // -------------------------------------------------------------
+  // eReader Notes & Quotes Import Handlers
+  // -------------------------------------------------------------
+  ipcMain.handle('scan-ereader-notes', async (_, options?: { volumePath?: string; targetTitle?: string }) => {
+    let volPath = options?.volumePath
+    let detectedName = ''
+    if (!volPath) {
+      const dev = getConnectedEReader()
+      if (dev) {
+        volPath = dev.volumePath
+        detectedName = dev.name
+      }
+    }
+
+    if (!volPath) {
+      return {
+        success: false,
+        connected: false,
+        message: 'No se detectó ningún eReader conectado por USB.',
+        books: []
+      }
+    }
+
+    try {
+      const scanResult = await scanDeviceForNotes(volPath)
+      let matchedQuotes: any[] = []
+      let matchedBookTitle: string | undefined = undefined
+
+      if (options?.targetTitle && scanResult.booksFound.length > 0) {
+        const match = findMatchingQuotesForTitle(scanResult.booksFound, options.targetTitle)
+        if (match.matchedBook) {
+          matchedQuotes = match.matchedBook.quotes
+          matchedBookTitle = match.matchedBook.title
+        }
+      }
+
+      return {
+        success: scanResult.success,
+        connected: true,
+        deviceName: scanResult.deviceName || detectedName,
+        deviceType: scanResult.deviceType,
+        notesFilePath: scanResult.filePath,
+        totalBooksWithNotes: scanResult.booksFound.length,
+        books: scanResult.booksFound,
+        matchedQuotes,
+        matchedBookTitle,
+        message: scanResult.message
+      }
+    } catch (err: any) {
+      return {
+        success: false,
+        connected: true,
+        message: `Error al leer las notas del eReader: ${err.message}`,
+        books: []
+      }
+    }
+  })
+
+  ipcMain.handle('select-and-parse-notes-file', async (_, targetTitle?: string) => {
+    const result = await dialog.showOpenDialog({
+      title: 'Seleccionar archivo de notas de eReader',
+      filters: [
+        { name: 'Archivos de notas de eReader', extensions: ['txt', 'sqlite', 'db', 'json'] },
+        { name: 'Kindle Clippings (*.txt)', extensions: ['txt'] },
+        { name: 'Bases de datos Kobo / Sony (*.sqlite, *.db)', extensions: ['sqlite', 'db'] },
+        { name: 'Todos los archivos', extensions: ['*'] }
+      ],
+      properties: ['openFile']
+    })
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return { canceled: true }
+    }
+
+    const filePath = result.filePaths[0]
+    try {
+      const parseResult = await parseNotesFile(filePath)
+      let matchedQuotes: any[] = []
+      let matchedBookTitle: string | undefined = undefined
+
+      if (targetTitle && parseResult.booksFound.length > 0) {
+        const match = findMatchingQuotesForTitle(parseResult.booksFound, targetTitle)
+        if (match.matchedBook) {
+          matchedQuotes = match.matchedBook.quotes
+          matchedBookTitle = match.matchedBook.title
+        }
+      }
+
+      return {
+        canceled: false,
+        success: parseResult.success,
+        filePath: parseResult.filePath,
+        deviceType: parseResult.deviceType,
+        deviceName: parseResult.deviceName,
+        totalBooksWithNotes: parseResult.booksFound.length,
+        books: parseResult.booksFound,
+        matchedQuotes,
+        matchedBookTitle,
+        message: parseResult.message
+      }
+    } catch (err: any) {
+      return {
+        canceled: false,
+        success: false,
+        message: `Error al procesar el archivo: ${err.message}`,
+        books: []
+      }
+    }
+  })
+
+  ipcMain.handle('save-book-quotes', async (_, bookId: string, quotes: any[]) => {
+    const activeUserId = getActiveUserId()
+    const updatedBooks = sqliteSaveBookQuotes(bookId, quotes, activeUserId)
+    return { success: true, books: updatedBooks }
   })
 
   // -------------------------------------------------------------

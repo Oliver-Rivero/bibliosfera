@@ -3,14 +3,22 @@ import { electronAPI } from '@electron-toolkit/preload'
 
 // Custom APIs for renderer
 const api = {
-  getBooks: () => ipcRenderer.invoke('get-books'),
-  addBook: (book) => ipcRenderer.invoke('add-book', book),
-  updateBook: (book) => ipcRenderer.invoke('update-book', book),
-  deleteBook: (id) => ipcRenderer.invoke('delete-book', id),
+  getBooks: (userId?: string) => ipcRenderer.invoke('get-books', userId),
+  addBook: (book, userId?: string) => ipcRenderer.invoke('add-book', book, userId),
+  updateBook: (book, userId?: string) => ipcRenderer.invoke('update-book', book, userId),
+  deleteBook: (id: string, userId?: string) => ipcRenderer.invoke('delete-book', id, userId),
   searchBook: (query) => ipcRenderer.invoke('search-book', query),
+
+  // Users APIs
+  getUsers: () => ipcRenderer.invoke('get-users'),
+  getActiveUser: () => ipcRenderer.invoke('get-active-user'),
+  setActiveUser: (userId: string) => ipcRenderer.invoke('set-active-user', userId),
+  addUser: (user: any, options?: { copyBooksFromUserId?: string }) => ipcRenderer.invoke('add-user', user, options),
+  updateUser: (id: string, updates: any) => ipcRenderer.invoke('update-user', id, updates),
+  deleteUser: (id: string) => ipcRenderer.invoke('delete-user', id),
   
   // Library (Calibre-style) APIs
-  getLibraryBooks: () => ipcRenderer.invoke('get-library-books'),
+  getLibraryBooks: (userId?: string) => ipcRenderer.invoke('get-library-books', userId),
   uploadLibraryBook: () => ipcRenderer.invoke('upload-library-book'),
   updateLibraryBook: (bookOrId: any, updates?: any) => ipcRenderer.invoke('update-library-book', bookOrId, updates),
   deleteLibraryBook: (id: string) => ipcRenderer.invoke('delete-library-book', id),
@@ -37,7 +45,12 @@ const api = {
   openLibraryStorageDir: () => ipcRenderer.invoke('open-library-storage-dir'),
   setAppTheme: (themeName: string) => ipcRenderer.invoke('set-app-theme', themeName),
   selectCustomDeviceFolder: () => ipcRenderer.invoke('select-custom-device-folder'),
-  getRecommendations: (seed?: number) => ipcRenderer.invoke('get-recommendations', seed)
+  getRecommendations: (seed?: number) => ipcRenderer.invoke('get-recommendations', seed),
+
+  // eReader Notes & Quotes APIs
+  scanEReaderNotes: (options?: { volumePath?: string; targetTitle?: string }) => ipcRenderer.invoke('scan-ereader-notes', options),
+  selectAndParseNotesFile: (targetTitle?: string) => ipcRenderer.invoke('select-and-parse-notes-file', targetTitle),
+  saveBookQuotes: (bookId: string, quotes: any[]) => ipcRenderer.invoke('save-book-quotes', bookId, quotes)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to
